@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Setup - Telegram Stremio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        :root { --primary:#6366f1; --accent:#a855f7; --bg:#0b0b14; --card:#15151f; --text:#e5e7eb; --text-sec:#9ca3af; }
+        body { background: radial-gradient(1200px 600px at 50% -10%, #1b1b2e 0%, var(--bg) 60%); color: var(--text); font-family: ui-sans-serif, system-ui, sans-serif; }
+        .glass { background: rgba(21,21,31,.6); backdrop-filter: blur(14px); border: 1px solid rgba(255,255,255,.06); }
+        input::placeholder { color: color-mix(in srgb, var(--text-sec) 45%, transparent); }
+        .field { background: rgba(11,11,20,.5); border: 1px solid rgba(255,255,255,.06); }
+        .field:focus { border-color: rgba(99,102,241,.5); box-shadow: 0 0 0 4px rgba(99,102,241,.12); outline: none; }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center py-10 px-4">
+    <div class="w-full max-w-2xl glass rounded-3xl overflow-hidden shadow-2xl">
+        <div class="px-8 pt-8 pb-6 text-center border-b border-white/5">
+            <div class="flex items-center gap-3 justify-center mb-3">
+                <div class="w-11 h-11 rounded-full flex items-center justify-center" style="background:var(--primary); box-shadow:0 0 18px var(--primary)">
+                    <i class="fa-solid fa-play text-white"></i>
+                </div>
+                <span class="text-2xl font-extrabold tracking-wide bg-clip-text text-transparent" style="background-image:linear-gradient(to right,var(--primary),var(--accent))">TG Stremio</span>
+            </div>
+            <h1 class="text-lg font-bold">First-Run Setup</h1>
+            <p class="text-sm mt-1" style="color:var(--text-sec)">Enter your credentials once. They are saved on your server and the app starts automatically.</p>
+        </div>
+
+        {% if saved %}
+        <div class="p-10 text-center">
+            <div class="w-16 h-16 mx-auto rounded-full bg-green-500/15 flex items-center justify-center mb-5">
+                <i class="fa-solid fa-check text-green-400 text-2xl"></i>
+            </div>
+            <h2 class="text-xl font-bold mb-2">Configuration saved!</h2>
+            <p class="text-sm mb-6" style="color:var(--text-sec)">Telegram-Stremio is starting up. This page will redirect once it's ready.</p>
+            <div class="inline-flex items-center gap-2 text-sm" style="color:var(--text-sec)">
+                <i class="fa-solid fa-circle-notch fa-spin"></i> Starting services...
+            </div>
+        </div>
+        <script>
+            setTimeout(function () {
+                let tries = 0;
+                const t = setInterval(function () {
+                    tries++;
+                    fetch('/login', { method: 'GET' }).then(function (r) {
+                        if (r.ok || r.redirected) { clearInterval(t); window.location.href = '/login'; }
+                    }).catch(function () {});
+                    if (tries > 60) { clearInterval(t); window.location.href = '/'; }
+                }, 3000);
+            }, 6000);
+        </script>
+        {% else %}
+
+        {% if errors %}
+        <div class="mx-8 mt-6 bg-red-500/10 border border-red-500/20 text-red-300 rounded-xl px-4 py-3 text-sm">
+            <ul class="list-disc list-inside space-y-1">
+                {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <form method="post" action="/save" class="p-8 space-y-5">
+            <div class="grid sm:grid-cols-2 gap-5">
+                <div class="space-y-1.5">
+                    <label class="text-[11px] font-bold uppercase tracking-widest" style="color:var(--text-sec)">API ID</label>
+                    <input name="api_id" inputmode="numeric" required value="{{ values.api_id or '' }}"
+                        class="field w-full px-4 py-3 rounded-xl text-sm" placeholder="123456">
+                    <p class="text-[11px]" style="color:var(--text-sec)">From <a class="underline" href="https://my.telegram.org" target="_blank">my.telegram.org</a></p>
+                </div>
+                <div class="space-y-1.5">
+                    <label class="text-[11px] font-bold uppercase tracking-widest" style="color:var(--text-sec)">API Hash</label>
+                    <input name="api_hash" required value="{{ values.api_hash or '' }}"
+                        class="field w-full px-4 py-3 rounded-xl text-sm" placeholder="0123456789abcdef...">
+                    <p class="text-[11px]" style="color:var(--text-sec)">From my.telegram.org</p>
+                </div>
+            </div>
+
+            <div class="space-y-1.5">
+                <label class="text-[11px] font-bold uppercase tracking-widest" style="color:var(--text-sec)">Bot Token</label>
+                <input name="bot_token" required value="{{ values.bot_token or '' }}"
+                    class="field w-full px-4 py-3 rounded-xl text-sm" placeholder="123456:ABC-DEF...">
+                <p class="text-[11px]" style="color:var(--text-sec)">From <a class="underline" href="https://t.me/BotFather" target="_blank">@BotFather</a></p>
+            </div>
+
+            <div class="grid sm:grid-cols-2 gap-5">
+                <div class="space-y-1.5">
+                    <label class="text-[11px] font-bold uppercase tracking-widest" style="color:var(--text-sec)">Owner ID</label>
+                    <input name="owner_id" inputmode="numeric" required value="{{ values.owner_id or '' }}"
+                        class="field w-full px-4 py-3 rounded-xl text-sm" placeholder="Your numeric Telegram ID">
+                    <p class="text-[11px]" style="color:var(--text-sec)">Get it from <a class="underline" href="https://t.me/missrose_bot" target="_blank">@MissRose_bot</a> via /id</p>
+                </div>
+                <div class="space-y-1.5">
+                    <label class="text-[11px] font-bold uppercase tracking-widest" style="color:var(--text-sec)">Port</label>
+                    <input name="port" inputmode="numeric" value="{{ values.port or '8000' }}"
+                        class="field w-full px-4 py-3 rounded-xl text-sm" placeholder="8000">
+                    <p class="text-[11px]" style="color:var(--text-sec)">Default 8000</p>
+                </div>
+            </div>
+
+            <div class="space-y-1.5">
+                <label class="text-[11px] font-bold uppercase tracking-widest" style="color:var(--text-sec)">Database (MongoDB URIs)</label>
+                <textarea name="database" required rows="2"
+                    class="field w-full px-4 py-3 rounded-xl text-sm" placeholder="mongodb+srv://user:pass@cluster1/...,mongodb+srv://user:pass@cluster2/...">{{ values.database or '' }}</textarea>
+                <p class="text-[11px]" style="color:var(--text-sec)">At least <b>2</b> URIs required (1 tracking + 1 storage), comma-separated. Free clusters from <a class="underline" href="https://www.mongodb.com/cloud/atlas/register" target="_blank">MongoDB Atlas</a>.</p>
+            </div>
+
+            <div class="space-y-1.5">
+                <label class="text-[11px] font-bold uppercase tracking-widest" style="color:var(--text-sec)">User Session String <span class="normal-case font-normal">(optional)</span></label>
+                <input name="user_session_string" value="{{ values.user_session_string or '' }}"
+                    class="field w-full px-4 py-3 rounded-xl text-sm" placeholder="Only needed for Global Search">
+                <p class="text-[11px]" style="color:var(--text-sec)">Leave empty unless you use Global Search.</p>
+            </div>
+
+            <button type="submit"
+                class="w-full py-3.5 rounded-2xl font-bold text-white transition-all flex items-center justify-center gap-3"
+                style="background:var(--primary); box-shadow:0 10px 30px -10px var(--primary)"
+                onmouseover="this.style.filter='brightness(1.1)'" onmouseout="this.style.filter='none'">
+                <i class="fa-solid fa-rocket"></i> Save &amp; Launch
+            </button>
+        </form>
+        {% endif %}
+    </div>
+</body>
+</html>

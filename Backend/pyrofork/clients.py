@@ -4,9 +4,9 @@ from Backend.logger import LOGGER
 from Backend.config import Telegram
 from Backend.pyrofork.bot import multi_clients, work_loads, StreamBot, client_dc_map
 from Backend.helper.settings_manager import SettingsManager
+from Backend.fastapi.routes.stream_routes import _streamer_by_client
 
 client_tokens: dict[int, str] = {}
-
 
 class TokenParser:
     @staticmethod
@@ -48,6 +48,7 @@ async def stop_client(client_id: int) -> None:
     work_loads.pop(client_id, None)
     client_dc_map.pop(client_id, None)
     client_tokens.pop(client_id, None)
+    _streamer_by_client.pop(client_id, None)
 
     if client:
         try:
@@ -55,14 +56,6 @@ async def stop_client(client_id: int) -> None:
             LOGGER.info(f"Stopped Bot Client {client_id}")
         except Exception as e:
             LOGGER.warning(f"Error stopping Client {client_id}: {e}")
-
-    # Drop any cached ByteStreamer tied to this client so stale FileId cache
-    # entries referencing a now-dead connection are never reused.
-    try:
-        from Backend.fastapi.routes.stream_routes import _streamer_by_client
-        _streamer_by_client.pop(client_id, None)
-    except Exception:
-        pass
 
 
 async def initialize_clients() -> None:
@@ -73,7 +66,7 @@ async def initialize_clients() -> None:
         client_dc_map[0] = main_dc
         LOGGER.info(f"Main StreamBot connected to DC {main_dc}")
     except Exception as e:
-        LOGGER.warning(f"Could not get DC for StreamBot: {e}")
+        LOGGER.warning(f"Could not get D for StreamBot: {e}")
         client_dc_map[0] = None
 
     all_tokens = TokenParser.parse_from_settings()
@@ -92,7 +85,6 @@ async def initialize_clients() -> None:
 
     if len(multi_clients) != 1:
         LOGGER.info(f"Multi-Client Mode Enabled with {len(multi_clients)} clients")
-        LOGGER.info(f"DC Distribution: {client_dc_map}")
     else:
         LOGGER.info("No additional clients were initialized, using default client")
 

@@ -1,11 +1,12 @@
+import shutil
+from os import execl as osexecl
+from aiofiles import open as aiopen
+from asyncio import create_subprocess_exec, gather
 from pyrogram import filters, Client, enums
 from pyrogram.types import Message
 from Backend.helper.custom_filter import CustomFilters
 from Backend.logger import LOGGER
-from asyncio import create_subprocess_exec, gather
-from aiofiles import open as aiopen
-from os import execl as osexecl
-import shutil
+
 
 @Client.on_message(filters.command('restart') & filters.private & CustomFilters.owner, group=10)
 async def restart(client: Client, message: Message):

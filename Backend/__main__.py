@@ -1,23 +1,21 @@
-from asyncio import get_event_loop, sleep as asleep
 import asyncio
 import logging
 from traceback import format_exc
+from asyncio import get_event_loop, sleep as asleep
 from pyrogram import idle
 from Backend import __version__, db
 from Backend.helper.pinger import ping
 from Backend.logger import LOGGER
 from Backend.fastapi import server
+from Backend.fastapi.main import app
+from Backend.helper import subscription_task_manager
+from Backend.helper.link_checker import DeadLinkChecker
 from Backend.helper.settings_manager import SettingsManager
+from Backend.helper.scan_manager import scan_manager, dbcheck_manager
 from Backend.helper.pyro import restart_notification, setup_bot_commands
+from Backend.helper.auto_catalog import start_auto_catalog_sync_background, start_auto_catalog_interval_loop
 from Backend.pyrofork.bot import Userbot, StreamBot
 from Backend.pyrofork.clients import initialize_clients
-from Backend.helper import subscription_task_manager
-from Backend.helper.scan_manager import scan_manager, dbcheck_manager
-from Backend.helper.link_checker import DeadLinkChecker
-from Backend.fastapi.main import app
-from Backend.helper.auto_catalog import (
-    start_auto_catalog_sync_background, start_auto_catalog_interval_loop
-)
 
 
 loop = get_event_loop()
@@ -26,43 +24,45 @@ async def start_services():
     try:
         LOGGER.info(f"Initializing Telegram-Stremio v-{__version__}")
         await asleep(1.2)
-        
+
+        #------ Connect Traking and Storage_1 Database ----
         await db.connect()
         await asleep(1.2)
 
+        #------ Get Other Variable from the Database -----
         await SettingsManager.initialize(db)
         await asleep(0.5)
-        
-        try:
-            await scan_manager.load(db)
-            dbcheck_manager.bind_db(db)
-        except Exception as e:
-            LOGGER.error(f"Failed to restore scan manager state on startup: {e}")
-        await asleep(0.3)
 
-        try:
-            await db.reload_extra_databases(SettingsManager.current().extra_databases)
-        except Exception as e:
-            LOGGER.error(f"Failed to reconnect extra storage databases on startup: {e}")
+        #---- Connect extra Database if set in Setting page-----
+        await db.reload_extra_databases(SettingsManager.current().extra_databases)
         await asleep(0.5)
 
+        #----- Restore the Scan state of channels and DB check-----
+        await scan_manager.load(db)
+        dbcheck_manager.bind_db(db)
+        await asleep(0.3)
+
+        #------ Start main Streambot-------
         await StreamBot.start()
         StreamBot.username = StreamBot.me.username
         LOGGER.info(f"Bot Client : [@{StreamBot.username}]")
         await asleep(1.2)
 
+        #------ Start Userbot if USER_SESSION_STRING is added in config.env-----
         if Userbot is not None:
             await Userbot.start()
             Userbot.username = Userbot.me.username
-            LOGGER.info(f"Userbot Client : [@{Userbot.username}] (Global Search / fallback enabled)")
+            LOGGER.info(f"Userbot Client : [@{Userbot.username}]")
         else:
             LOGGER.info("Userbot not configured (USER_SESSION_STRING empty) — running with StreamBot only.")
         await asleep(1.2)
 
+        #------ Initialise the Multi tokens ------
         LOGGER.info("Initializing Multi Clients...")
         await initialize_clients()
         await asleep(2)
-        
+
+        #---- Automatically set Bot Commands-----
         await setup_bot_commands(StreamBot)
         await asleep(2)
 
@@ -70,13 +70,12 @@ async def start_services():
         await restart_notification()
         loop.create_task(server.serve())
         loop.create_task(ping())
+
         
+        #---- Start Background Deadlink Checker(24hr), auto catalog sync(1hr)-------
         link_checker_task = DeadLinkChecker(db, app, check_interval_hours=24)
         loop.create_task(link_checker_task.start())
-
-        
         loop.create_task(start_auto_catalog_sync_background(db, delay_seconds=20, full_rebuild=False))
-
         loop.create_task(start_auto_catalog_interval_loop(db))
 
         await subscription_task_manager.sync(StreamBot)

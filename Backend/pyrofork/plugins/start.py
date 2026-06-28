@@ -1,6 +1,5 @@
 from pyrogram import filters, Client, enums
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-from Backend.helper.custom_filter import CustomFilters
 from Backend.helper.settings_manager import SettingsManager
 from Backend.config import Telegram
 from Backend import db
@@ -12,9 +11,9 @@ async def send_start_message(client: Client, message: Message):
     try:
         user_id = (message.from_user.id if message.from_user else None) or (message.sender_chat.id if message.sender_chat else None) or message.chat.id
         base_url = SettingsManager.current().base_url
-        addon_url = f"{base_url}/stremio/manifest.json"
 
         if not SettingsManager.current().subscription:
+            #----- only create token for owner------
             if user_id != Telegram.OWNER_ID:
                 return
             user_name = (message.from_user.first_name or message.from_user.username or f"User {user_id}") if message.from_user else f"Chat {user_id}"
@@ -23,7 +22,7 @@ async def send_start_message(client: Client, message: Message):
                 token_str = token_doc.get("token")
                 addon_url = f"{base_url}/stremio/{token_str}/manifest.json"
             except Exception as e:
-                print(f"DEBUG: Error ensuring token for free user: {e}")
+                await message.reply_text(f"⚠️ Error: {e}")
                 
             await message.reply_text(
                 '🎉 <b>Welcome to the Telegram Stremio Media Server!</b>\n\n'
@@ -36,11 +35,11 @@ async def send_start_message(client: Client, message: Message):
             )
             return
 
-        # Subscription logic (When SUBSCRIPTION=True)
+        #----- Subscription logic (When SUBSCRIPTION=True) ------
         user = await db.get_user(user_id)
         now = datetime.utcnow()
         
-        # Check if user has an active subscription
+        #------- Check if user has an active subscription -------
         is_active = False
         if user and user.get("subscription_status") == "active":
             if user.get("subscription_expiry") and user.get("subscription_expiry") > now:
@@ -52,8 +51,8 @@ async def send_start_message(client: Client, message: Message):
             plans = await db.get_subscription_plans()
             if not plans:
                 return await message.reply_text(
-                    '<b>Welcome to the Telegram Stremio Private Group!</b>\n\n'
-                    'Currently, no subscription plans are set up. Please contact the administrator.',
+                    '<b>Welcome to the Telegram Stremio Private Service!</b>\n\n'
+                    'Currently, no subscription plans are set up. Please contact the Owner.',
                     quote=True,
                     parse_mode=enums.ParseMode.HTML
                 )
@@ -65,7 +64,7 @@ async def send_start_message(client: Client, message: Message):
             keyboard = InlineKeyboardMarkup(keyboard_buttons)
             
             return await message.reply_text(
-                '<b>Welcome to the Telegram Stremio Private Group!</b>\n\n'
+                '<b>Welcome to the Telegram Stremio Private Service!</b>\n\n'
                 'Access to this bot and the Stremio Addon requires an active subscription.\n'
                 'Please select a subscription plan below to continue:',
                 reply_markup=keyboard,
@@ -93,4 +92,3 @@ async def send_start_message(client: Client, message: Message):
 
     except Exception as e:
         await message.reply_text(f"⚠️ Error: {e}")
-        print(f"Error in /start handler: {e}")

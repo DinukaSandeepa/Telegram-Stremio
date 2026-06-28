@@ -6,15 +6,31 @@ from Backend.pyrofork.bot import multi_clients, work_loads, StreamBot, client_dc
 from Backend.helper.settings_manager import SettingsManager
 from Backend.fastapi.routes.stream_routes import _streamer_by_client
 
+# Maps client_id -> bot token; used to detect added/removed/changed tokens on reload.
 client_tokens: dict[int, str] = {}
 
+
+# ── Token Parsing ─────────────────────────────────────────────────────────────
 class TokenParser:
     @staticmethod
     def parse_from_settings() -> dict[int, str]:
+        # client_id starts at 1 (0 is reserved for the main StreamBot)
         tokens = SettingsManager.current().multi_tokens
-        return {i + 1: tok.strip() for i, tok in enumerate(tokens) if tok and tok.strip()}
+        return {i + 1: t.strip() for i, t in enumerate(tokens) if t and t.strip()}
 
 
+# ── DC Helper ─────────────────────────────────────────────────────────────────
+async def _resolve_dc(client, client_id: int, label: str) -> None:
+    """Record the client's data-center id, or None if it can't be resolved."""
+    try:
+        client_dc_map[client_id] = await client.storage.dc_id()
+        LOGGER.info(f"{label} connected to DC {client_dc_map[client_id]}")
+    except Exception as e:
+        LOGGER.warning(f"Could not get DC for {label}: {e}")
+        client_dc_map[client_id] = None
+
+
+# ── Client Lifecycle ──────────────────────────────────────────────────────────
 async def start_client(client_id: int, token: str):
     try:
         LOGGER.info(f"Starting - Bot Client {client_id}")
@@ -25,17 +41,9 @@ async def start_client(client_id: int, token: str):
             bot_token=token,
             sleep_threshold=100,
             no_updates=True,
-            in_memory=True
+            in_memory=True,
         ).start()
-
-        try:
-            client_dc = await client.storage.dc_id()
-            client_dc_map[client_id] = client_dc
-            LOGGER.info(f"Client {client_id} connected to DC {client_dc}")
-        except Exception as e:
-            LOGGER.warning(f"Could not get DC for Client {client_id}: {e}")
-            client_dc_map[client_id] = None
-
+        await _resolve_dc(client, client_id, f"Client {client_id}")
         work_loads[client_id] = 0
         return client_id, client
     except Exception as e:
@@ -45,10 +53,9 @@ async def start_client(client_id: int, token: str):
 
 async def stop_client(client_id: int) -> None:
     client = multi_clients.pop(client_id, None)
-    work_loads.pop(client_id, None)
-    client_dc_map.pop(client_id, None)
-    client_tokens.pop(client_id, None)
-    _streamer_by_client.pop(client_id, None)
+    # Also drop the cached ByteStreamer so a dead connection's FileId cache isn't reused.
+    for registry in (work_loads, client_dc_map, client_tokens, _streamer_by_client):
+        registry.pop(client_id, None)
 
     if client:
         try:
@@ -58,30 +65,26 @@ async def stop_client(client_id: int) -> None:
             LOGGER.warning(f"Error stopping Client {client_id}: {e}")
 
 
+# ── Batch start + register the successful clients ─────────────────────────────
+async def _start_and_register(tokens: dict[int, str]) -> dict:
+    results = await gather(*(create_task(start_client(c, t)) for c, t in tokens.items()))
+    started = {cid: client for cid, client in results if client}
+    multi_clients.update(started)
+    client_tokens.update({cid: tokens[cid] for cid in started})
+    return started
+
+
+# ── Initialization & Reload ───────────────────────────────────────────────────
 async def initialize_clients() -> None:
     multi_clients[0], work_loads[0] = StreamBot, 0
-
-    try:
-        main_dc = await StreamBot.storage.dc_id()
-        client_dc_map[0] = main_dc
-        LOGGER.info(f"Main StreamBot connected to DC {main_dc}")
-    except Exception as e:
-        LOGGER.warning(f"Could not get D for StreamBot: {e}")
-        client_dc_map[0] = None
+    await _resolve_dc(StreamBot, 0, "Main StreamBot")
 
     all_tokens = TokenParser.parse_from_settings()
     if not all_tokens:
         LOGGER.info("No additional Bot Clients found, Using default client")
         return
 
-    tasks = [create_task(start_client(i, token)) for i, token in all_tokens.items()]
-    results = await gather(*tasks)
-
-    started = {client_id: client for client_id, client in results if client}
-    multi_clients.update(started)
-    for client_id, token in all_tokens.items():
-        if client_id in started:
-            client_tokens[client_id] = token
+    await _start_and_register(all_tokens)
 
     if len(multi_clients) != 1:
         LOGGER.info(f"Multi-Client Mode Enabled with {len(multi_clients)} clients")
@@ -91,37 +94,18 @@ async def initialize_clients() -> None:
 
 async def reload_multi_token_clients() -> dict:
     new_tokens = TokenParser.parse_from_settings()
+    old_ids = set(client_tokens)
 
-    old_ids = set(client_tokens.keys())
-    new_ids = set(new_tokens.keys())
-
-    to_stop = [
-        cid for cid in old_ids
-        if cid not in new_ids or client_tokens.get(cid) != new_tokens.get(cid)
-    ]
+    to_stop = [cid for cid in old_ids if client_tokens.get(cid) != new_tokens.get(cid)]
     for cid in to_stop:
         await stop_client(cid)
 
-    to_start = {
-        cid: tok for cid, tok in new_tokens.items()
-        if cid not in old_ids or client_tokens.get(cid) != tok
-    }
-
+    to_start = {c: t for c, t in new_tokens.items() if client_tokens.get(c) != t}
     if to_start:
-        tasks = [create_task(start_client(cid, tok)) for cid, tok in to_start.items()]
-        results = await gather(*tasks)
-        started = {cid: client for cid, client in results if client}
-        multi_clients.update(started)
-        for cid, tok in to_start.items():
-            if cid in started:
-                client_tokens[cid] = tok
+        await _start_and_register(to_start)
 
     LOGGER.info(
         f"Multi-token reload complete — {len(to_stop)} stopped, "
         f"{len(to_start)} (re)started, {len(multi_clients)} total clients active."
     )
-    return {
-        "stopped": len(to_stop),
-        "started": len(to_start),
-        "total_clients": len(multi_clients),
-    }
+    return {"stopped": len(to_stop), "started": len(to_start), "total_clients": len(multi_clients)}

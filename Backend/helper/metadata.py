@@ -602,8 +602,10 @@ async def _fetch_anime_movie(title, encoded_string, year, quality) -> dict | Non
     return result
 
 
-# Parse a filename/caption and resolve full movie or TV metadata for the indexer.
+# ------Main Function --------
 async def metadata(filename: str, channel: int, msg_id, override_id: str = None) -> dict | None:
+
+    #----- Skip Part001,CD01, Disk01 video file -----
     if _MULTIPART_RE.search(filename):
         LOGGER.info(f"Skipping {filename}: split video file not meant to be combined in Stremio")
         return None
@@ -616,21 +618,25 @@ async def metadata(filename: str, channel: int, msg_id, override_id: str = None)
     # detection: a file can be BOTH split AND a combined/whole-season file, so
     # the parts of a split combined file still group (via group_key) and
     # recombine instead of landing in the combined folder as separate entries.
+
+    #----- Check file is in split format or not .001, .002-------
     split_info = parse_split_info(filename)
     part_number = split_info[1] if split_info else None
     parse_target = strip_part_suffix(filename) if split_info else filename
 
+    #---- Parse filename into title,year,season,episode,quality by PTN and guessit------
     try:
         parsed = parse_media_name(parse_target)
     except Exception as e:
         LOGGER.error(f"Parsing failed for {filename}: {e}\n{traceback.format_exc()}")
         return None
 
+    #------ Check file is combine format or not------
     combined = parse_combined_episodes(parse_target)
-
     excess = parsed.get("excess")
+    #------ Skip combined file that doesn't have Season number------
     if not combined and excess and any("combined" in item.lower() for item in excess):
-        LOGGER.info(f"Skipping {filename}: contains 'combined'")
+        LOGGER.info(f"Skipping {filename}: contains 'combined' but doesn't have season number")
         return None
 
     title = parsed.get("title")
@@ -639,21 +645,22 @@ async def metadata(filename: str, channel: int, msg_id, override_id: str = None)
     year = parsed.get("year")
     quality = parsed.get("quality")
 
-    if combined:
-        season, episode = combined["season"], combined["start"] or 1
-    elif isinstance(season, list) or isinstance(episode, list):
-        LOGGER.warning(f"Invalid season/episode format for {filename}: {parsed}")
-        return None
-    elif season and not episode:
-        # Season pack with no episode number (e.g. "Season 01") -> whole-season combined.
-        combined = {"season": season, "start": None, "end": None}
-        episode = 1
     if not quality:
         LOGGER.warning(f"Skipping {filename}: No resolution (parsed={parsed})")
         return None
     if not title:
         LOGGER.info(f"No title parsed from: {filename} (parsed={parsed})")
         return None
+        
+    if combined:
+        season, episode = combined["season"], combined["start"] or 1
+    elif isinstance(season, list) or isinstance(episode, list):
+        LOGGER.warning(f"Invalid season/episode format for {filename}: {parsed}")
+        return None
+    elif season and not episode:
+        combined = {"season": season, "start": None, "end": None}
+        episode = 1
+        
 
     default_id = _resolve_default_id(override_id, filename)
 

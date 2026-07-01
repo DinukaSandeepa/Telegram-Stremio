@@ -5,6 +5,7 @@ from Backend.config import Telegram
 from Backend.helper.settings_manager import SettingsManager
 from Backend import db, __version__
 import PTN
+import re
 from fastapi.responses import HTMLResponse
 from datetime import datetime, timezone, timedelta
 from Backend.fastapi.security.tokens import verify_token
@@ -74,11 +75,21 @@ def format_released_date(media):
     return None
 
 def format_stream_details(filename: str, quality: str, size: str, is_split: bool = False) -> tuple[str, str]:
+    if filename:
+        # Clean filename by truncating after the first video extension
+        pattern = re.compile(
+            r'\.(mkv|mp4|avi|mov|flv|wmv|webm|m4v|mpg|mpeg|3gp|ts|m2ts|divx|xvid|asf|ogv|qt|vob)\b',
+            re.IGNORECASE
+        )
+        match = pattern.search(filename)
+        if match:
+            filename = filename[:match.end()]
+
     size_emoji = "📦" if is_split else "💾"
     try:
         parsed = PTN.parse(filename)
     except Exception:
-        return (f"Telegram {quality}", f"📁 {filename}\n{size_emoji} {size}")
+        return (f"Telegram {quality}", f"📁\u00A0{filename}\n{size_emoji}\u00A0{size}")
 
     codec_parts = []
     if parsed.get("codec"):
@@ -97,8 +108,8 @@ def format_stream_details(filename: str, quality: str, size: str, is_split: bool
     stream_name = f"Telegram {resolution} {quality_type}".strip()
 
     stream_title_parts = [
-        f"📁 {filename}",
-        f"{size_emoji} {size}",
+        f"📁\u00A0{filename}",
+        f"{size_emoji}\u00A0{size}",
     ]
     if codec_info:
         stream_title_parts.append(codec_info)

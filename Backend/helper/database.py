@@ -29,6 +29,37 @@ def convert_objectid_to_str(document: Dict[str, Any]) -> Dict[str, Any]:
     return document
 
 
+def detect_subtitle_language(filename: str) -> str:
+    filename_lower = filename.lower()
+    languages = {
+        "english": "en", "eng": "en", "en": "en",
+        "spanish": "es", "spa": "es", "es": "es",
+        "french": "fr", "fre": "fr", "fra": "fr", "fr": "fr",
+        "german": "de", "ger": "de", "deu": "de", "de": "de",
+        "italian": "it", "ita": "it", "it": "it",
+        "portuguese": "pt", "por": "pt", "pt": "pt",
+        "russian": "ru", "rus": "ru", "ru": "ru",
+        "chinese": "zh", "chi": "zh", "zho": "zh", "zh": "zh",
+        "japanese": "ja", "jpn": "ja", "ja": "ja",
+        "korean": "ko", "kor": "ko", "ko": "ko",
+        "arabic": "ar", "ara": "ar", "ar": "ar",
+        "turkish": "tr", "tur": "tr", "tr": "tr",
+        "dutch": "nl", "dut": "nl", "nld": "nl", "nl": "nl",
+        "polish": "pl", "pol": "pl", "pl": "pl",
+        "swedish": "sv", "swe": "sv", "sv": "sv",
+        "indonesian": "id", "ind": "id", "id": "id",
+        "vietnamese": "vi", "vie": "vi", "vi": "vi",
+        "sinhala": "si", "sin": "si", "si": "si",
+        "tamil": "ta", "tam": "ta", "ta": "ta",
+        "hindi": "hi", "hin": "hi", "hi": "hi",
+    }
+    parts = re.split(r'[^a-zA-Z]', filename_lower)
+    for part in reversed(parts):
+        if part in languages:
+            return languages[part]
+    return "en"
+
+
 class Database:
     def __init__(self, db_name: str = "dbFyvio"):
         self.db_uris = Telegram.DATABASE
@@ -759,6 +790,15 @@ class Database:
         for i in range(1, self.current_db_index + 1):
             db = self.dbs[f"storage_{i}"]
 
+            # Try deleting from subtitles first
+            try:
+                sub = await db["subtitles"].find_one({"chat_id": channel, "msg_id": msg_id})
+                if sub:
+                    await db["subtitles"].delete_one({"_id": sub["_id"]})
+                    return True
+            except Exception as e:
+                LOGGER.warning(f"Failed subtitle delete check in remove_media_part: {e}")
+
             movie = await db["movie"].find_one(
                 {"telegram.parts": {"$elemMatch": {"chat_id": channel, "msg_id": msg_id}}}
             )
@@ -816,6 +856,52 @@ class Database:
                 return True
 
         return False
+
+    async def insert_subtitle(
+        self, metadata_info: dict,
+        channel: int, msg_id: int, filename: str, size: str
+    ) -> Optional[ObjectId]:
+        import os
+        try:
+            encoded_id = await encode_string({"chat_id": channel, "msg_id": msg_id})
+        except Exception:
+            return None
+
+        lang = detect_subtitle_language(filename)
+        _, ext = os.path.splitext(filename.lower())
+        fmt = ext.lstrip('.')
+        if not fmt:
+            fmt = "srt"
+
+        current_db_key = f"storage_{self.current_db_index}"
+        
+        # Check if subtitle is already inserted
+        for db_idx in range(self.current_db_index, 0, -1):
+            db_key = f"storage_{db_idx}"
+            try:
+                existing = await self.dbs[db_key]["subtitles"].find_one({"file_id": encoded_id})
+                if existing:
+                    return existing["_id"]
+            except Exception:
+                pass
+
+        sub_doc = {
+            "imdb_id": metadata_info["imdb_id"],
+            "media_type": metadata_info["media_type"],
+            "season": metadata_info.get("season_number"),
+            "episode": metadata_info.get("episode_number"),
+            "file_id": encoded_id,
+            "filename": filename,
+            "lang": lang,
+            "format": fmt,
+            "size": size,
+            "chat_id": channel,
+            "msg_id": msg_id,
+            "updated_on": datetime.utcnow()
+        }
+
+        result = await self.dbs[current_db_key]["subtitles"].insert_one(sub_doc)
+        return result.inserted_id
 
     async def insert_media(
         self, metadata_info: dict,
@@ -1536,6 +1622,15 @@ class Database:
         for i in range(1, self.current_db_index + 1):
             db = self.dbs[f"storage_{i}"]
             
+            # Check Subtitles
+            try:
+                sub = await db["subtitles"].find_one({"file_id": stream_id_hash})
+                if sub:
+                    await db["subtitles"].delete_one({"_id": sub["_id"]})
+                    return True
+            except Exception:
+                pass
+
             # Check Movies
             movie = await db["movie"].find_one({"telegram.id": stream_id_hash})
             if movie:
@@ -1680,11 +1775,16 @@ class Database:
                 db = self.dbs[key]
                 movie_count = await db["movie"].count_documents({})
                 tv_count = await db["tv"].count_documents({})
+                try:
+                    sub_count = await db["subtitles"].count_documents({})
+                except Exception:
+                    sub_count = 0
                 db_stats = await db.command("dbstats")
                 stats.append({
                     "db_name": key,
                     "movie_count": movie_count,
                     "tv_count": tv_count,
+                    "sub_count": sub_count,
                     "storageSize": db_stats.get("storageSize", 0),
                     "dataSize": db_stats.get("dataSize", 0)
                 })

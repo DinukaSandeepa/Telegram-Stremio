@@ -176,6 +176,11 @@ class ScanManager:
                     return True
                 if await storage["tv"].find_one({"seasons.episodes.telegram.id": stream_hash}):
                     return True
+                try:
+                    if await storage["subtitles"].find_one({"file_id": stream_hash}):
+                        return True
+                except Exception:
+                    pass
             if await storage["movie"].find_one({"telegram.parts": part_match}):
                 return True
             if await storage["tv"].find_one({"seasons.episodes.telegram.parts": part_match}):
@@ -429,6 +434,8 @@ class ScanManager:
 
         is_video = bool(message.video)
         is_supported = is_video
+        is_subtitle = False
+
         if message.document and not is_video:
             mime = getattr(message.document, "mime_type", "") or ""
             if mime.startswith("video/"):
@@ -437,8 +444,10 @@ class ScanManager:
                 candidate = message.caption or message.document.file_name or ""
                 if parse_split_info(candidate):
                     is_supported = True
+                elif candidate.lower().endswith(('.srt', '.vtt', '.ass')):
+                    is_subtitle = True
 
-        if not is_supported:
+        if not is_supported and not is_subtitle:
             s["counters"]["skipped_nonvid"] += 1
             return
 
@@ -456,8 +465,16 @@ class ScanManager:
         except Exception as e:
             LOGGER.warning(f"[ScanManager] Dup-check error msg {msg_id}: {e}")
 
+        # Metadata parsing
+        if is_subtitle:
+            import os
+            base, ext = os.path.splitext(title)
+            title_for_meta = f"{base} 1080p{ext}"
+        else:
+            title_for_meta = title
+
         try:
-            metadata_info = await metadata(clean_filename(title), channel_int, msg_id)
+            metadata_info = await metadata(clean_filename(title_for_meta), channel_int, msg_id)
         except Exception as e:
             LOGGER.warning(f"[ScanManager] Metadata exception for msg {msg_id}: {e}")
             metadata_info = None
@@ -469,19 +486,30 @@ class ScanManager:
         title_clean = remove_urls(title)
         if metadata_info.get('group_key'):
             title_clean = strip_part_suffix(title_clean)
-        if not title_clean.endswith(('.mkv', '.mp4')):
-            title_clean += '.mkv'
+        
+        if not is_subtitle:
+            if not title_clean.endswith(('.mkv', '.mp4')):
+                title_clean += '.mkv'
 
         try:
             async with self._db_lock:
-                updated_id = await db.insert_media(
-                    metadata_info,
-                    channel=channel_int,
-                    msg_id=msg_id,
-                    size=size,
-                    name=title_clean,
-                    raw_size=raw_size,
-                )
+                if is_subtitle:
+                    updated_id = await db.insert_subtitle(
+                        metadata_info,
+                        channel=channel_int,
+                        msg_id=msg_id,
+                        filename=title_clean,
+                        size=size,
+                    )
+                else:
+                    updated_id = await db.insert_media(
+                        metadata_info,
+                        channel=channel_int,
+                        msg_id=msg_id,
+                        size=size,
+                        name=title_clean,
+                        raw_size=raw_size,
+                    )
             if updated_id:
                 s["counters"]["indexed"] += 1
             else:
@@ -542,6 +570,13 @@ class ScanManager:
                         await storage["tv"].replace_one({"_id": tv["_id"]}, tv)
                     else:
                         await storage["tv"].delete_one({"_id": tv["_id"]})
+            
+            # Purge subtitles
+            try:
+                sub_result = await storage["subtitles"].delete_many({"chat_id": channel_int})
+                purged += sub_result.deleted_count
+            except Exception as e:
+                LOGGER.warning(f"[ScanManager] Could not purge subtitles from storage_{i}: {e}")
         return purged
 
 

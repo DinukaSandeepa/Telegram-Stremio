@@ -136,10 +136,10 @@ def get_resolution_priority(stream_name: str) -> int:
 @router.get("/{token}/manifest.json")
 async def get_manifest(token: str, token_data: dict = Depends(verify_token)):
     if SettingsManager.current().hide_catalog:
-        resources = ["stream"]
+        resources = ["stream", "subtitles"]
         catalogs = []
     else:
-        resources = ["catalog", "meta", "stream"]
+        resources = ["catalog", "meta", "stream", "subtitles"]
         catalogs = [
             {
                 "type": "movie",
@@ -748,3 +748,66 @@ async def configure_addon(token: str):
 </body>
 </html>"""
     return HTMLResponse(html)
+
+
+@router.get("/{token}/subtitles/{media_type}/{id}/{extra:path}.json")
+@router.get("/{token}/subtitles/{media_type}/{id}.json")
+async def get_subtitles(
+    token: str,
+    media_type: str,
+    id: str,
+    extra: Optional[str] = None,
+    token_data: dict = Depends(verify_token)
+):
+    if token_data.get("subscription_expired"):
+        return {"subtitles": []}
+
+    try:
+        parts = id.split(":")
+        imdb_id = parts[0]
+        season_num = int(parts[1]) if len(parts) > 1 else None
+        episode_num = int(parts[2]) if len(parts) > 2 else None
+    except (ValueError, IndexError):
+        raise HTTPException(status_code=400, detail="Invalid Stremio ID format")
+
+    subtitles = []
+    db_media_type = "tv" if media_type == "series" else "movie"
+
+    # Fetch subtitles matching imdb_id (and season, episode if series) from database
+    for db_idx in range(db.current_db_index, 0, -1):
+        db_key = f"storage_{db_idx}"
+        storage = db.dbs.get(db_key)
+        if not storage:
+            continue
+        
+        query = {
+            "imdb_id": imdb_id,
+            "media_type": db_media_type
+        }
+        if db_media_type == "tv":
+            query["season"] = season_num
+            query["episode"] = episode_num
+
+        try:
+            cursor = storage["subtitles"].find(query)
+            async for sub in cursor:
+                sub_id = sub.get("file_id")
+                filename = sub.get("filename", "subtitle.srt")
+                lang = sub.get("lang", "en")
+                fmt = sub.get("format", "srt")
+                
+                original_url = f"{SettingsManager.current().base_url}/dl/{token}/{sub_id}/{quote(filename)}"
+                proxy_url = f"{SettingsManager.current().http_proxy_url}{original_url}" if SettingsManager.current().http_proxy_url else None
+                
+                url = proxy_url if proxy_url else original_url
+                
+                subtitles.append({
+                    "id": sub_id,
+                    "url": url,
+                    "lang": lang,
+                    "format": fmt
+                })
+        except Exception as e:
+            LOGGER.error(f"[Subtitles] Error fetching subtitles from db storage_{db_idx}: {e}")
+
+    return {"subtitles": subtitles}

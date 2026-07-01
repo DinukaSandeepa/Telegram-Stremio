@@ -101,6 +101,16 @@
     border-color: color-mix(in srgb, var(--primary) 45%, transparent);
     background: color-mix(in srgb, var(--primary) 12%, transparent);
 }
+.anime-check.is-movie-sub {
+    color: #3b82f6;
+    border-color: color-mix(in srgb, #3b82f6 45%, transparent);
+    background: color-mix(in srgb, #3b82f6 12%, transparent);
+}
+.anime-check.is-tv-sub {
+    color: #10b981;
+    border-color: color-mix(in srgb, #10b981 45%, transparent);
+    background: color-mix(in srgb, #10b981 12%, transparent);
+}
 
 /* ── Grid helpers ────────────────────────────────────────────────────────── */
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
@@ -189,18 +199,29 @@
         <!-- Auth Channels -->
         <label class="s-label">AUTH_CHANNELS
             <span style="font-weight:400;text-transform:none;letter-spacing:0">
-                — users must be a member of at least one. Tick <strong>Anime</strong> on a
-                channel to index its files with AniList + api.ani.zip metadata.</span>
+                — users must be a member of at least one. Tick <strong>Anime</strong>, <strong>Movie Sub</strong>, or <strong>TV Sub</strong> to configure channel modes.</span>
         </label>
         {% set anime_norm = settings.anime_channels | map('string') | map('replace', '-100', '') | list %}
+        {% set movie_sub_norm = settings.movie_subtitle_channels | map('string') | map('replace', '-100', '') | list %}
+        {% set tv_sub_norm = settings.tv_subtitle_channels | map('string') | map('replace', '-100', '') | list %}
         <div class="multi-list-items" id="auth_channels_items">
             {% for ch in settings.auth_channels %}
             {% set is_anime = (ch | string | replace('-100', '')) in anime_norm %}
+            {% set is_movie_sub = (ch | string | replace('-100', '')) in movie_sub_norm %}
+            {% set is_tv_sub = (ch | string | replace('-100', '')) in tv_sub_norm %}
             <div class="multi-item auth-item">
                 <input type="text" class="s-input" value="{{ ch }}" data-list="auth_channels">
                 <label class="anime-check {% if is_anime %}is-anime{% endif %}" title="Mark as anime channel — uses AniList/ani.zip metadata">
                     <input type="checkbox" class="anime-toggle" {% if is_anime %}checked{% endif %} onchange="syncAnimeChip(this)">
                     <span>Anime</span>
+                </label>
+                <label class="anime-check {% if is_movie_sub %}is-movie-sub{% endif %}" style="accent-color:#3b82f6" title="Mark as Movie Subtitles channel">
+                    <input type="checkbox" class="movie-sub-toggle" {% if is_movie_sub %}checked{% endif %} onchange="syncMovieSubChip(this)">
+                    <span>Movie Sub</span>
+                </label>
+                <label class="anime-check {% if is_tv_sub %}is-tv-sub{% endif %}" style="accent-color:#10b981" title="Mark as TV Subtitles channel">
+                    <input type="checkbox" class="tv-sub-toggle" {% if is_tv_sub %}checked{% endif %} onchange="syncTvSubChip(this)">
+                    <span>TV Sub</span>
                 </label>
                 <button class="remove-btn" onclick="removeItem(this)" title="Remove">
                     <i class="fa-solid fa-xmark"></i>
@@ -566,12 +587,20 @@ function togglePwdVisibility() {
 }
 
 /* ── Multi-value list helpers ─────────────────────────────────────────── */
-function authRowHTML(value, isAnime) {
+function authRowHTML(value, isAnime, isMovieSub, isTvSub) {
     return `
         <input type="text" class="s-input" value="${escapeHtmlAttr(value)}" data-list="auth_channels">
         <label class="anime-check ${isAnime ? 'is-anime' : ''}" title="Mark as anime channel — uses AniList/ani.zip metadata">
             <input type="checkbox" class="anime-toggle" ${isAnime ? 'checked' : ''} onchange="syncAnimeChip(this)">
             <span>Anime</span>
+        </label>
+        <label class="anime-check ${isMovieSub ? 'is-movie-sub' : ''}" style="accent-color:#3b82f6" title="Mark as Movie Subtitles channel">
+            <input type="checkbox" class="movie-sub-toggle" ${isMovieSub ? 'checked' : ''} onchange="syncMovieSubChip(this)">
+            <span>Movie Sub</span>
+        </label>
+        <label class="anime-check ${isTvSub ? 'is-tv-sub' : ''}" style="accent-color:#10b981" title="Mark as TV Subtitles channel">
+            <input type="checkbox" class="tv-sub-toggle" ${isTvSub ? 'checked' : ''} onchange="syncTvSubChip(this)">
+            <span>TV Sub</span>
         </label>
         <button class="remove-btn" onclick="removeItem(this)" title="Remove">
             <i class="fa-solid fa-xmark"></i>
@@ -584,6 +613,16 @@ function syncAnimeChip(cb) {
     if (chip) chip.classList.toggle('is-anime', cb.checked);
 }
 
+function syncMovieSubChip(cb) {
+    const chip = cb.closest('.anime-check');
+    if (chip) chip.classList.toggle('is-movie-sub', cb.checked);
+}
+
+function syncTvSubChip(cb) {
+    const chip = cb.closest('.anime-check');
+    if (chip) chip.classList.toggle('is-tv-sub', cb.checked);
+}
+
 function addItem(listKey) {
     const newInput = document.getElementById(listKey + '_new');
     const value = newInput.value.trim();
@@ -594,7 +633,7 @@ function addItem(listKey) {
 
     if (listKey === 'auth_channels') {
         item.className = 'multi-item auth-item';
-        item.innerHTML = authRowHTML(value, false);
+        item.innerHTML = authRowHTML(value, false, false, false);
     } else {
         const isNumeric = listKey === 'approver_ids';
         item.className = 'multi-item';
@@ -620,6 +659,34 @@ function collectAnimeChannels() {
     const out = [];
     container.querySelectorAll('.multi-item').forEach(row => {
         const toggle = row.querySelector('.anime-toggle');
+        const input = row.querySelector('input[data-list="auth_channels"]');
+        if (toggle && toggle.checked && input && input.value.trim()) {
+            out.push(input.value.trim());
+        }
+    });
+    return out;
+}
+
+function collectMovieSubChannels() {
+    const container = document.getElementById('auth_channels_items');
+    if (!container) return [];
+    const out = [];
+    container.querySelectorAll('.multi-item').forEach(row => {
+        const toggle = row.querySelector('.movie-sub-toggle');
+        const input = row.querySelector('input[data-list="auth_channels"]');
+        if (toggle && toggle.checked && input && input.value.trim()) {
+            out.push(input.value.trim());
+        }
+    });
+    return out;
+}
+
+function collectTvSubChannels() {
+    const container = document.getElementById('auth_channels_items');
+    if (!container) return [];
+    const out = [];
+    container.querySelectorAll('.multi-item').forEach(row => {
+        const toggle = row.querySelector('.tv-sub-toggle');
         const input = row.querySelector('input[data-list="auth_channels"]');
         if (toggle && toggle.checked && input && input.value.trim()) {
             out.push(input.value.trim());
@@ -659,6 +726,8 @@ async function saveSettings() {
         upstream_branch:               document.getElementById('upstream_branch').value.trim(),
         auth_channels:                 collectList('auth_channels'),
         anime_channels:                collectAnimeChannels(),
+        movie_subtitle_channels:       collectMovieSubChannels(),
+        tv_subtitle_channels:          collectTvSubChannels(),
         subscription:                  document.getElementById('subscription').checked,
         subscription_group_id:         parseInt(document.getElementById('subscription_group_id').value || '0', 10),
         payment_instructions:          document.getElementById('payment_instructions').value.trim(),
@@ -752,8 +821,8 @@ function renderSettings(s) {
     document.getElementById('subscription_group_id').value = s.subscription_group_id || 0;
     document.getElementById('http_proxy_url').value = s.http_proxy_url || '';
 
-    // Auth channels (with per-channel anime checkbox) + other multi-value lists
-    rebuildAuthChannels(s.auth_channels, s.anime_channels);
+    // Auth channels (with per-channel checkbox toggles) + other multi-value lists
+    rebuildAuthChannels(s.auth_channels, s.anime_channels, s.movie_subtitle_channels, s.tv_subtitle_channels);
     rebuildSimpleList('approver_ids_items', s.approver_ids, 'number');
     rebuildSimpleList('multi_tokens_items', s.multi_tokens, 'text');
     rebuildSimpleList('global_search_channels_items', s.global_search_channels, 'text');
@@ -782,16 +851,20 @@ function rebuildSimpleList(containerId, values, inputType) {
     });
 }
 
-function rebuildAuthChannels(values, animeValues) {
+function rebuildAuthChannels(values, animeValues, movieSubValues, tvSubValues) {
     const container = document.getElementById('auth_channels_items');
     if (!container) return;
     const animeNorm = (animeValues || []).map(v => String(v).split('-100').join(''));
+    const movieSubNorm = (movieSubValues || []).map(v => String(v).split('-100').join(''));
+    const tvSubNorm = (tvSubValues || []).map(v => String(v).split('-100').join(''));
     container.innerHTML = '';
     (values || []).forEach(val => {
         const isAnime = animeNorm.includes(String(val).split('-100').join(''));
+        const isMovieSub = movieSubNorm.includes(String(val).split('-100').join(''));
+        const isTvSub = tvSubNorm.includes(String(val).split('-100').join(''));
         const item = document.createElement('div');
         item.className = 'multi-item auth-item';
-        item.innerHTML = authRowHTML(val, isAnime);
+        item.innerHTML = authRowHTML(val, isAnime, isMovieSub, isTvSub);
         container.appendChild(item);
     });
 }

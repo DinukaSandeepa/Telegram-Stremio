@@ -1029,7 +1029,7 @@ async def update_settings_api(payload: dict) -> dict:
         if key in payload:
             payload[key] = bool(payload[key])
 
-    list_str_keys = {"auth_channels", "multi_tokens", "extra_databases", "global_search_channels", "anime_channels"}
+    list_str_keys = {"auth_channels", "multi_tokens", "extra_databases", "global_search_channels", "anime_channels", "movie_subtitle_channels", "tv_subtitle_channels"}
     for key in list_str_keys:
         if key in payload:
             if not isinstance(payload[key], list):
@@ -1086,6 +1086,36 @@ async def update_settings_api(payload: dict) -> dict:
                     )
             cleaned.append(channel)
         payload["anime_channels"] = cleaned
+
+    if "movie_subtitle_channels" in payload:
+        cleaned = []
+        for channel in payload["movie_subtitle_channels"]:
+            channel = str(channel).strip()
+            if not channel:
+                continue
+            try:
+                int(channel.replace("-100", ""))
+            except ValueError:
+                raise HTTPException(status_code=400,
+                    detail=f"Invalid movie subtitle channel id: {channel}"
+                    )
+            cleaned.append(channel)
+        payload["movie_subtitle_channels"] = cleaned
+
+    if "tv_subtitle_channels" in payload:
+        cleaned = []
+        for channel in payload["tv_subtitle_channels"]:
+            channel = str(channel).strip()
+            if not channel:
+                continue
+            try:
+                int(channel.replace("-100", ""))
+            except ValueError:
+                raise HTTPException(status_code=400,
+                    detail=f"Invalid tv subtitle channel id: {channel}"
+                    )
+            cleaned.append(channel)
+        payload["tv_subtitle_channels"] = cleaned
 
     # Strip whitespace from string fields
     for key in ("tmdb_api", "base_url", "upstream_repo", "upstream_branch",

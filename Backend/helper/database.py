@@ -867,7 +867,7 @@ class Database:
         except Exception:
             return None
 
-        lang = detect_subtitle_language(filename)
+        lang = "si"
         _, ext = os.path.splitext(filename.lower())
         fmt = ext.lstrip('.')
         if not fmt:

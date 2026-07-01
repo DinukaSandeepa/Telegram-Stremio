@@ -432,31 +432,59 @@ class ScanManager:
         s = self.state
         db = self._db
 
+        channel_int = int(str(chat_id).replace("-100", ""))
+
+        # Check if the channel is configured for subtitles
+        is_movie_sub = False
+        is_tv_sub = False
+        
+        try:
+            movie_sub_channels = SettingsManager.current().movie_subtitle_channels
+            tv_sub_channels = SettingsManager.current().tv_subtitle_channels
+            target_ch_str = str(channel_int)
+            
+            if any(str(c).strip().replace("-100", "") == target_ch_str for c in movie_sub_channels):
+                is_movie_sub = True
+            if any(str(c).strip().replace("-100", "") == target_ch_str for c in tv_sub_channels):
+                is_tv_sub = True
+        except Exception as e:
+            LOGGER.warning(f"[ScanManager] Error reading subtitle channel settings: {e}")
+
+        is_subtitle_channel = is_movie_sub or is_tv_sub
         is_video = bool(message.video)
-        is_supported = is_video
+        is_supported = False
         is_subtitle = False
 
-        if message.document and not is_video:
-            mime = getattr(message.document, "mime_type", "") or ""
-            if mime.startswith("video/"):
-                is_supported = True
-            else:
+        if is_subtitle_channel:
+            # Subtitle channel: only allow subtitle documents
+            if message.document:
                 candidate = message.caption or message.document.file_name or ""
-                if parse_split_info(candidate):
+                # Split caption by newline to see if any line ends with a subtitle extension
+                lines = [l.strip() for l in candidate.split("\n") if l.strip()]
+                for l in lines:
+                    if any(l.lower().endswith(ext) for ext in ('.srt', '.vtt', '.ass')):
+                        is_subtitle = True
+                        break
+        else:
+            # Regular channel: only allow video files
+            is_supported = is_video
+            if message.document and not is_video:
+                mime = getattr(message.document, "mime_type", "") or ""
+                if mime.startswith("video/"):
                     is_supported = True
-                elif candidate.lower().endswith(('.srt', '.vtt', '.ass')):
-                    is_subtitle = True
+                else:
+                    candidate = message.caption or message.document.file_name or ""
+                    if parse_split_info(candidate):
+                        is_supported = True
 
         if not is_supported and not is_subtitle:
             s["counters"]["skipped_nonvid"] += 1
             return
 
         file = message.video or message.document
-        title = message.caption or file.file_name
         msg_id = message.id
         raw_size = file.file_size
         size = get_readable_file_size(file.file_size)
-        channel_int = int(str(chat_id).replace("-100", ""))
 
         try:
             if await self._stream_id_exists(channel_int, msg_id):
@@ -464,6 +492,20 @@ class ScanManager:
                 return
         except Exception as e:
             LOGGER.warning(f"[ScanManager] Dup-check error msg {msg_id}: {e}")
+
+        # Determine title
+        if is_subtitle:
+            # For subtitles, if the caption has multiple lines, take the first line that has the subtitle extension
+            caption = message.caption or ""
+            lines = [l.strip() for l in caption.split("\n") if l.strip()]
+            sub_line = ""
+            for l in lines:
+                if any(l.lower().endswith(ext) for ext in ('.srt', '.vtt', '.ass')):
+                    sub_line = l
+                    break
+            title = sub_line or file.file_name or ""
+        else:
+            title = message.caption or file.file_name
 
         # Metadata parsing
         if is_subtitle:
@@ -480,6 +522,16 @@ class ScanManager:
             metadata_info = None
 
         if metadata_info is None:
+            s["counters"]["skipped_meta"] += 1
+            return
+
+        # Enforce type constraints for subtitle channels
+        if is_movie_sub and metadata_info.get("media_type") != "movie":
+            LOGGER.warning(f"[ScanManager] Subtitle in movie channel parsed as {metadata_info.get('media_type')}, skipping: {title}")
+            s["counters"]["skipped_meta"] += 1
+            return
+        if is_tv_sub and metadata_info.get("media_type") != "tv":
+            LOGGER.warning(f"[ScanManager] Subtitle in TV channel parsed as {metadata_info.get('media_type')}, skipping: {title}")
             s["counters"]["skipped_meta"] += 1
             return
 

@@ -11,6 +11,7 @@ from Backend.helper.encrypt import encode_string, decode_string
 from Backend.helper.metadata import metadata
 from Backend.helper.pyro import clean_filename, get_readable_file_size, remove_urls
 from Backend.helper.split_files import parse_split_info, strip_part_suffix
+from Backend.helper.settings_manager import SettingsManager
 
 SCAN_BATCH_SIZE = 200          
 SCAN_MAX_EMPTY_BATCHES = 10    

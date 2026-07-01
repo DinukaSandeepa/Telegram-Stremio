@@ -777,7 +777,7 @@ async def get_subtitles(
     for db_idx in range(db.current_db_index, 0, -1):
         db_key = f"storage_{db_idx}"
         storage = db.dbs.get(db_key)
-        if not storage:
+        if storage is None:
             continue
         
         query = {

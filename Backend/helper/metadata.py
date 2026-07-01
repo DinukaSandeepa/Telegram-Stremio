@@ -718,7 +718,7 @@ async def fetch_movie_metadata(title, encoded_string, year=None, quality=None, d
 
 
 # ── Main entry point ────────────────────────────────────────────────────────
-async def metadata(filename: str, channel: int, msg_id, override_id: str = None) -> dict | None:
+async def metadata(filename: str, channel: int, msg_id, override_id: str = None, is_anime: bool = False) -> dict | None:
     if _MULTIPART_RE.search(filename):
         LOGGER.info(f"Skipping {filename}: split video file not meant to be combined in Stremio")
         return None
@@ -773,7 +773,7 @@ async def metadata(filename: str, channel: int, msg_id, override_id: str = None)
         encoded_string = None
 
     group_key = f"{channel}:{quality}:{split_info[0]}" if split_info else None
-    anime_channel = _is_anime_channel(channel)
+    anime_channel = is_anime or _is_anime_channel(channel)
 
     try:
         if season and episode:

@@ -310,6 +310,42 @@ class ScanManager:
 
         s["current_channel"] = ch_key
 
+        # Resolve subtitle and anime channel flags
+        self._current_is_movie_sub = False
+        self._current_is_tv_sub = False
+        self._current_is_anime = False
+
+        try:
+            movie_subs = SettingsManager.current().movie_subtitle_channels
+            tv_subs = SettingsManager.current().tv_subtitle_channels
+            anime_chans = SettingsManager.current().anime_channels
+
+            chat_id_str = str(chat_id).replace("-100", "")
+            chat_username = getattr(chat, "username", None) if 'chat' in locals() and chat else None
+            if not chat_username:
+                if str(ch_key).startswith("@") or not str(ch_key).replace("-", "").isdigit():
+                    chat_username = str(ch_key).lstrip("@")
+
+            def is_match(config_list):
+                for c in config_list:
+                    c_str = str(c).strip().lower()
+                    if c_str.replace("-100", "") == chat_id_str:
+                        return True
+                    if chat_username and c_str.lstrip("@") == chat_username.lower():
+                        return True
+                return False
+
+            self._current_is_movie_sub = is_match(movie_subs)
+            self._current_is_tv_sub = is_match(tv_subs)
+            self._current_is_anime = is_match(anime_chans)
+            
+            LOGGER.info(
+                f"[ScanManager] Channel config: Movie Sub={self._current_is_movie_sub}, "
+                f"TV Sub={self._current_is_tv_sub}, Anime={self._current_is_anime}"
+            )
+        except Exception as e:
+            LOGGER.warning(f"[ScanManager] Error resolving channel subtitle/anime flags: {e}")
+
         last_id = await self._probe_last_message_id(client, chat_id)
         use_probe = last_id is not None and last_id >= 1
         s["current_target_id"] = last_id if use_probe else 0
@@ -434,21 +470,9 @@ class ScanManager:
 
         channel_int = int(str(chat_id).replace("-100", ""))
 
-        # Check if the channel is configured for subtitles
-        is_movie_sub = False
-        is_tv_sub = False
-        
-        try:
-            movie_sub_channels = SettingsManager.current().movie_subtitle_channels
-            tv_sub_channels = SettingsManager.current().tv_subtitle_channels
-            target_ch_str = str(channel_int)
-            
-            if any(str(c).strip().replace("-100", "") == target_ch_str for c in movie_sub_channels):
-                is_movie_sub = True
-            if any(str(c).strip().replace("-100", "") == target_ch_str for c in tv_sub_channels):
-                is_tv_sub = True
-        except Exception as e:
-            LOGGER.warning(f"[ScanManager] Error reading subtitle channel settings: {e}")
+        # Read the pre-resolved current channel flags
+        is_movie_sub = getattr(self, "_current_is_movie_sub", False)
+        is_tv_sub = getattr(self, "_current_is_tv_sub", False)
 
         is_subtitle_channel = is_movie_sub or is_tv_sub
         is_video = bool(message.video)
@@ -516,7 +540,13 @@ class ScanManager:
             title_for_meta = title
 
         try:
-            metadata_info = await metadata(clean_filename(title_for_meta), channel_int, msg_id)
+            is_anime = getattr(self, "_current_is_anime", False)
+            metadata_info = await metadata(
+                clean_filename(title_for_meta),
+                channel_int,
+                msg_id,
+                is_anime=is_anime
+            )
         except Exception as e:
             LOGGER.warning(f"[ScanManager] Metadata exception for msg {msg_id}: {e}")
             metadata_info = None

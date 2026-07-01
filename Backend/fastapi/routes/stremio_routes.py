@@ -801,10 +801,11 @@ async def get_subtitles(
                 
                 url = proxy_url if proxy_url else original_url
                 
+                sub_track_id = f"{imdb_id}_{season_num}_{episode_num}_{sub_id}" if season_num else f"{imdb_id}_{sub_id}"
                 subtitles.append({
-                    "id": sub_id,
+                    "id": sub_track_id,
                     "url": url,
-                    "lang": filename,
+                    "lang": f"sin - {filename}",
                     "format": fmt
                 })
         except Exception as e:

@@ -804,7 +804,7 @@ async def get_subtitles(
                 subtitles.append({
                     "id": sub_id,
                     "url": url,
-                    "lang": lang,
+                    "lang": filename,
                     "format": fmt
                 })
         except Exception as e:

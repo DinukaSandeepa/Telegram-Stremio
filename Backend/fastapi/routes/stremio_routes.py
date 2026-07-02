@@ -16,7 +16,7 @@ from Backend.pyrofork.bot import get_streambot_url
 router = APIRouter(prefix="/stremio", tags=["Stremio Addon"])
 
 # --- Configuration ---
-ADDON_NAME = "Telegram"
+ADDON_NAME = "MCF Stream"
 ADDON_VERSION = __version__
 PAGE_SIZE = 15
 
@@ -112,7 +112,7 @@ def format_stream_details(filename: str, quality: str, size: str, is_split: bool
     try:
         parsed = PTN.parse(filename)
     except Exception:
-        return (f"Telegram {quality}", f"📁\u00A0{filename}\n{size_emoji}\u00A0{size}")
+        return (f"MCF Stream {quality}", f"📁\u00A0{filename}\n{size_emoji}\u00A0{size}")
 
     codec_parts = []
     if parsed.get("codec"):
@@ -128,7 +128,7 @@ def format_stream_details(filename: str, quality: str, size: str, is_split: bool
 
     resolution = parsed.get("resolution", quality)
     quality_type = parsed.get("quality", "")
-    stream_name = f"Telegram {resolution} {quality_type}".strip()
+    stream_name = f"MCF Stream {resolution} {quality_type}".strip()
 
     stream_title_parts = [
         f"📁\u00A0{filename}",
@@ -239,7 +239,7 @@ async def get_manifest(token: str, token_data: dict = Depends(verify_token)):
 
 
     addon_name = ADDON_NAME
-    addon_desc = "Streams movies and series from your Telegram."
+    addon_desc = "Streams movies and series from MCF Stream."
     addon_version = ADDON_VERSION
     expiry_obj = None
 
@@ -255,13 +255,13 @@ async def get_manifest(token: str, token_data: dict = Depends(verify_token)):
                         addon_name = f"{ADDON_NAME} — Expires {expiry_str}"
                         addon_desc = (
                             f"📅 Subscription active until {expiry_str}.\n"
-                            f"Streams movies and series from your Telegram."
+                            f"Streams movies and series from MCF Stream."
                         )
                         epoch_tag = format(int(expiry_obj.timestamp()) & 0xFFFF, "x")
                         addon_version = f"{ADDON_VERSION}-{epoch_tag}"
                     else:
                         addon_name = f"{ADDON_NAME} — Active"
-                        addon_desc = "✅ Subscription active.\nStreams movies and series from your Telegram."
+                        addon_desc = "✅ Subscription active.\nStreams movies and series from MCF Stream."
             except Exception:
                 pass
 
@@ -663,71 +663,71 @@ async def configure_addon(token: str):
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Update Telegram Stremio Addon</title>
+  <title>Update MCF Stream Addon</title>
   <style>
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       background: #0f0f1a; color: #e2e8f0;
       min-height: 100vh; display: flex; align-items: center; justify-content: center;
       padding: 24px;
-    }}
-    .card {{
+    }
+    .card {
       background: #1e1e2e; border: 1px solid #2d2d44; border-radius: 16px;
       padding: 40px 32px; max-width: 480px; width: 100%; text-align: center;
-    }}
-    .logo {{ font-size: 48px; margin-bottom: 12px; }}
-    h1 {{ font-size: 1.5rem; font-weight: 700; color: #f8fafc; margin-bottom: 6px; }}
-    .sub-title {{ color: #94a3b8; font-size: 0.9rem; margin-bottom: 28px; }}
-    .info-row {{
+    }
+    .logo { font-size: 48px; margin-bottom: 12px; }
+    h1 { font-size: 1.5rem; font-weight: 700; color: #f8fafc; margin-bottom: 6px; }
+    .sub-title { color: #94a3b8; font-size: 0.9rem; margin-bottom: 28px; }
+    .info-row {
       display: flex; justify-content: space-between; align-items: center;
       background: #2a2a3e; border-radius: 10px; padding: 12px 16px;
       margin-bottom: 12px; font-size: 0.9rem;
-    }}
-    .info-label {{ color: #94a3b8; }}
-    .info-val {{ font-weight: 600; color: #f1f5f9; }}
-    .status-badge {{
+    }
+    .info-label { color: #94a3b8; }
+    .info-val { font-weight: 600; color: #f1f5f9; }
+    .status-badge {
       display: inline-block; padding: 2px 10px; border-radius: 999px;
       font-size: 0.8rem; font-weight: 700;
       background: {status_color}22; color: {status_color};
-    }}
-    .btn-update {{
+    }
+    .btn-update {
       display: block; width: 100%;
       background: linear-gradient(135deg, #7c3aed, #4f46e5);
       color: white; font-weight: 700; font-size: 1rem;
       padding: 14px 24px; border-radius: 12px; border: none;
       cursor: pointer; text-decoration: none; margin: 28px 0 12px;
       transition: opacity 0.2s;
-    }}
-    .btn-update:hover {{ opacity: 0.85; }}
-    .btn-web {{
+    }
+    .btn-update:hover { opacity: 0.85; }
+    .btn-web {
       display: block; color: #6366f1; font-size: 0.85rem;
       text-decoration: underline; margin-bottom: 20px;
-    }}
-    .steps {{
+    }
+    .steps {
       background: #2a2a3e; border-radius: 10px; padding: 14px 18px;
       margin: 16px 0; text-align: left; font-size: 0.85rem; color: #cbd5e1;
-    }}
-    .steps b {{ color: #f1f5f9; }}
-    .steps ol {{ margin-top: 8px; margin-left: 18px; line-height: 1.8; }}
-    .url-box {{
+    }
+    .steps b { color: #f1f5f9; }
+    .steps ol { margin-top: 8px; margin-left: 18px; line-height: 1.8; }
+    .url-box {
       background: #111827; border: 1px solid #374151; border-radius: 8px;
       padding: 10px 14px; font-family: monospace; font-size: 0.75rem;
       color: #94a3b8; word-break: break-all; text-align: left; margin-top: 16px;
-    }}
-    .btn-copy {{
+    }
+    .btn-copy {
       margin-top: 10px; width: 100%; padding: 10px;
       background: #1e293b; border: 1px solid #374151; color: #94a3b8;
       border-radius: 8px; cursor: pointer; font-size: 0.85rem; transition: all 0.2s;
-    }}
-    .btn-copy:hover {{ background: #334155; color: #f1f5f9; }}
-    .hint {{ color: #64748b; font-size: 0.78rem; margin-top: 6px; }}
+    }
+    .btn-copy:hover { background: #334155; color: #f1f5f9; }
+    .hint { color: #64748b; font-size: 0.78rem; margin-top: 6px; }
   </style>
 </head>
 <body>
   <div class="card">
     <div class="logo">🎬</div>
-    <h1>Telegram Stremio Addon</h1>
+    <h1>MCF Stream Addon</h1>
     <p class="sub-title">Click the button below to install or update your addon in Stremio.</p>
 
     <div class="info-row">

@@ -42,6 +42,29 @@ GENRES = [
 
 # --------------- Helper Functions -----------------
 
+ISO_639_1_TO_3 = {
+    "en": "eng",
+    "es": "spa",
+    "fr": "fre",
+    "de": "ger",
+    "it": "ita",
+    "pt": "por",
+    "ru": "rus",
+    "zh": "chi",
+    "ja": "jpn",
+    "ko": "kor",
+    "ar": "ara",
+    "tr": "tur",
+    "nl": "dut",
+    "pl": "pol",
+    "sv": "swe",
+    "id": "ind",
+    "vi": "vie",
+    "si": "sin",
+    "ta": "tam",
+    "hi": "hin",
+}
+
 def convert_to_stremio_meta(item: dict) -> dict:
     media_type = "series" if item.get("media_type") == "tv" else "movie"
     
@@ -805,7 +828,7 @@ async def get_subtitles(
                 subtitles.append({
                     "id": sub_track_id,
                     "url": url,
-                    "lang": f"sin - {filename}",
+                    "lang": ISO_639_1_TO_3.get(lang, lang),
                     "format": fmt
                 })
         except Exception as e:

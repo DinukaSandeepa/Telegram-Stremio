@@ -1251,3 +1251,115 @@ async def purge_dead_links_api(payload: dict | None = None) -> dict:
         result = await dbcheck_manager.purge()
 
     return {"status": "success" if result.get("ok") else "error", **result}
+
+
+# --- API Routes for Subtitle Management ---
+
+async def list_subtitles_api(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(24, ge=1, le=100),
+    search: str = Query(""),
+    media_type: str = Query("all", regex="^(all|movie|tv)$")
+):
+    try:
+        filter_dict = {}
+        if media_type != "all":
+            filter_dict["media_type"] = media_type
+
+        if search:
+            words = search.split()
+            regex_query = {
+                '$regex': '.*' + '.*'.join(words) + '.*',
+                '$options': 'i'
+            }
+            filter_dict["$or"] = [
+                {"filename": regex_query},
+                {"imdb_id": regex_query},
+                {"lang": regex_query}
+            ]
+
+        sort_dict = {"updated_on": -1}
+        results, dbs_checked, total_count = await db._paginate_collection(
+            "subtitles", sort_dict, page, page_size, filter_dict=filter_dict
+        )
+        total_pages = (total_count + page_size - 1) // page_size
+
+        from Backend.helper.database import convert_objectid_to_str
+        return {
+            "total_count": total_count,
+            "total_pages": total_pages,
+            "databases_checked": dbs_checked,
+            "current_page": page,
+            "subtitles": [convert_objectid_to_str(result) for result in results],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def delete_subtitle_api(subtitle_id: str):
+    try:
+        from bson import ObjectId
+        deleted = False
+        for i in range(1, db.current_db_index + 1):
+            db_key = f"storage_{i}"
+            if db_key not in db.dbs:
+                continue
+            result = await db.dbs[db_key]["subtitles"].delete_one({"_id": ObjectId(subtitle_id)})
+            if result.deleted_count > 0:
+                deleted = True
+                break
+        if deleted:
+            return {"message": "Subtitle deleted successfully"}
+        else:
+            raise HTTPException(status_code=404, detail="Subtitle not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def update_subtitle_api(subtitle_id: str, request: Request):
+    try:
+        from bson import ObjectId
+        update_data = await request.json()
+
+        clean_update = {}
+        if "imdb_id" in update_data:
+            clean_update["imdb_id"] = str(update_data["imdb_id"])
+        if "media_type" in update_data:
+            if update_data["media_type"] in ["movie", "tv"]:
+                clean_update["media_type"] = update_data["media_type"]
+        if "season" in update_data:
+            val = update_data["season"]
+            clean_update["season"] = int(val) if val is not None and str(val).strip() != "" else None
+        if "episode" in update_data:
+            val = update_data["episode"]
+            clean_update["episode"] = int(val) if val is not None and str(val).strip() != "" else None
+        if "lang" in update_data:
+            clean_update["lang"] = str(update_data["lang"])
+        if "filename" in update_data:
+            clean_update["filename"] = str(update_data["filename"])
+        if "format" in update_data:
+            clean_update["format"] = str(update_data["format"])
+
+        clean_update["updated_on"] = datetime.utcnow()
+
+        updated = False
+        for i in range(1, db.current_db_index + 1):
+            db_key = f"storage_{i}"
+            if db_key not in db.dbs:
+                continue
+            existing = await db.dbs[db_key]["subtitles"].find_one({"_id": ObjectId(subtitle_id)})
+            if existing:
+                await db.dbs[db_key]["subtitles"].update_one(
+                    {"_id": ObjectId(subtitle_id)},
+                    {"$set": clean_update}
+                )
+                updated = True
+                break
+
+        if updated:
+            return {"message": "Subtitle updated successfully"}
+        else:
+            raise HTTPException(status_code=404, detail="Subtitle not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

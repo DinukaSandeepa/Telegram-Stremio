@@ -334,3 +334,18 @@ async def settings_page(request: Request, _: bool = Depends(require_auth)):
             "userbot_configured": userbot_configured,
         },
 )
+
+
+async def subtitles_management_page(request: Request, _: bool = Depends(require_auth)):
+    theme_name = request.session.get("theme", DEFAULT_THEME)
+    theme = get_theme(theme_name)
+    current_user = get_current_user(request)
+
+    return templates.TemplateResponse("subtitles_manage.html", {
+        "request": request,
+        "theme": theme,
+        "themes": get_all_themes(),
+        "current_theme": theme_name,
+        "current_user": current_user
+    })
+

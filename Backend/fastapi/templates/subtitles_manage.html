@@ -1,0 +1,655 @@
+{% extends "base.html" %}
+
+{% block title %}Subtitle Management - Telegram Stremio{% endblock %}
+
+{% block content %}
+<div class="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <!-- Header -->
+    <section class="glass-panel rounded-3xl p-5 sm:p-6 lg:p-8 mb-6 sm:mb-8">
+        <div class="flex flex-col gap-5">
+            <div class="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+                <div>
+                    <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-hairline bg-surface text-xs font-semibold text-text-secondary mb-3">
+                        <i class="fa-solid fa-closed-captioning text-primary"></i>
+                        Subtitle Control
+                    </div>
+                    <h1 class="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight text-text">
+                        Subtitle Management
+                    </h1>
+                    <p class="mt-2 text-sm sm:text-base text-text-secondary max-w-2xl">
+                        Manage your subtitle files, languages, and metadata mappings for movies and series.
+                    </p>
+                </div>
+
+                <div class="flex flex-wrap gap-2">
+                    <button onclick="setFilter('all')" id="filter-all"
+                            class="inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold transition border bg-primary text-white border-primary shadow-lg shadow-primary/20">
+                        <i class="fa-solid fa-border-all"></i> All
+                    </button>
+                    <button onclick="setFilter('movie')" id="filter-movie"
+                            class="inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold transition border glass-panel text-text hover:bg-surface-2 border-hairline">
+                        <i class="fa-solid fa-film"></i> Movies
+                    </button>
+                    <button onclick="setFilter('tv')" id="filter-tv"
+                            class="inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold transition border glass-panel text-text hover:bg-surface-2 border-hairline">
+                        <i class="fa-solid fa-tv"></i> TV Shows
+                    </button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Search -->
+    <section class="glass-panel rounded-3xl p-4 sm:p-6 mb-6 sm:mb-8">
+        <div class="flex flex-col lg:flex-row gap-4 lg:items-center">
+            <div class="flex-1">
+                <label for="search-input" class="block text-xs font-bold uppercase tracking-wider text-text-secondary mb-2">
+                    Search Subtitles
+                </label>
+                <div class="relative">
+                    <i class="fa-solid fa-magnifying-glass absolute left-4 top-1/2 -translate-y-1/2 text-text-secondary text-sm"></i>
+                    <input type="text"
+                           id="search-input"
+                           placeholder="Search by filename, IMDb ID, or language code (e.g., 'si', 'en')..."
+                           class="w-full pl-11 pr-4 py-3 rounded-2xl bg-background text-text placeholder:text-text-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition shadow-sm">
+                </div>
+            </div>
+
+            <div class="flex flex-col sm:flex-row gap-3 lg:pt-7">
+                <button onclick="searchSubtitles()"
+                        class="inline-flex justify-center items-center gap-2 bg-primary hover:bg-primary/90 text-white px-5 py-3 rounded-2xl transition font-bold shadow-lg shadow-primary/20">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    Search
+                </button>
+                <button onclick="clearSearch()"
+                        class="inline-flex justify-center items-center gap-2 glass-panel hover:bg-surface-2 text-text px-5 py-3 rounded-2xl transition font-bold border border-hairline">
+                    <i class="fa-solid fa-rotate-left"></i>
+                    Clear
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Loading Indicator -->
+    <div id="loading" class="hidden text-center py-16">
+        <div class="inline-flex items-center justify-center w-14 h-14 rounded-full border border-hairline glass-panel mb-4">
+            <div class="animate-spin rounded-full h-7 w-7 border-b-2 border-primary"></div>
+        </div>
+        <p class="text-text-secondary">Loading subtitles...</p>
+    </div>
+
+    <!-- Error Display -->
+    <div id="error-display" class="hidden mb-6 sm:mb-8">
+        <div class="glass-panel rounded-3xl p-5 sm:p-6 border border-red-500/30">
+            <div class="flex items-start gap-3">
+                <div class="w-11 h-11 rounded-2xl bg-red-500/15 flex items-center justify-center shrink-0">
+                    <i class="fa-solid fa-triangle-exclamation text-red-400"></i>
+                </div>
+                <div class="flex-1">
+                    <h3 class="text-lg font-bold text-red-300">Error Loading Subtitles</h3>
+                    <p id="error-message" class="mt-2 text-sm text-red-200/90"></p>
+                    <button onclick="retryLoad()"
+                            class="mt-4 inline-flex items-center gap-2 bg-primary hover:bg-primary/90 text-white px-4 py-2.5 rounded-2xl transition font-bold shadow-lg shadow-primary/20">
+                        <i class="fa-solid fa-rotate-right"></i>
+                        Try Again
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Subtitles Grid / List -->
+    <div id="subtitle-list" class="space-y-4 mb-6 sm:mb-8">
+        <!-- Subtitles will load here -->
+    </div>
+
+    <!-- No Results -->
+    <div id="no-results" class="hidden text-center py-16">
+        <div class="glass-panel rounded-3xl p-8 max-w-xl mx-auto">
+            <div class="mx-auto w-16 h-16 rounded-2xl bg-surface flex items-center justify-center mb-4 border border-hairline">
+                <i class="fa-solid fa-box-open text-3xl text-text-secondary"></i>
+            </div>
+            <h3 class="text-xl font-bold text-text mb-2">No subtitles found</h3>
+            <p class="text-sm text-text-secondary mb-6">
+                No subtitles match your search/filter criteria.
+            </p>
+            <button onclick="clearSearch()"
+                    class="inline-flex items-center gap-2 bg-primary hover:bg-primary/90 text-white px-5 py-3 rounded-2xl transition font-bold shadow-lg shadow-primary/20">
+                Show All Subtitles
+            </button>
+        </div>
+    </div>
+
+    <!-- Pagination -->
+    <div id="pagination" class="hidden mt-6 sm:mt-8">
+        <div class="glass-panel rounded-3xl p-3 sm:p-4 overflow-x-auto">
+            <div class="flex justify-center items-center gap-2 min-w-max px-1" id="pagination-inner"></div>
+        </div>
+    </div>
+
+    <!-- Subtitle Info -->
+    <div id="subtitle-info" class="hidden mt-6">
+        <div class="glass-panel rounded-3xl p-4 sm:p-5">
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 text-sm text-text-secondary">
+                <span id="results-info"></span>
+                <span id="db-info"></span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Modal -->
+<div id="edit-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm hidden opacity-0 transition-opacity duration-300">
+    <div class="glass-panel w-full max-w-lg rounded-3xl p-6 sm:p-8 transform scale-95 transition-transform duration-300 relative shadow-strong border border-hairline">
+        <button onclick="closeEditModal()" class="absolute top-4 right-4 text-text-secondary hover:text-text hover:bg-surface-2 rounded-full w-8 h-8 flex items-center justify-center transition">
+            <i class="fa-solid fa-xmark"></i>
+        </button>
+
+        <h3 class="text-xl font-bold text-text mb-6 flex items-center gap-2">
+            <i class="fa-solid fa-closed-captioning text-primary"></i>
+            Edit Subtitle Metadata
+        </h3>
+
+        <form id="edit-form" onsubmit="saveSubtitle(event)" class="space-y-4">
+            <input type="hidden" id="edit-id">
+
+            <div>
+                <label for="edit-filename" class="block text-xs font-bold uppercase tracking-wider text-text-secondary mb-2">Filename</label>
+                <input type="text" id="edit-filename" required class="w-full px-4 py-3 rounded-2xl bg-background text-text border border-border focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition">
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label for="edit-imdb" class="block text-xs font-bold uppercase tracking-wider text-text-secondary mb-2">IMDb ID</label>
+                    <input type="text" id="edit-imdb" required placeholder="tt1234567" class="w-full px-4 py-3 rounded-2xl bg-background text-text border border-border focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition">
+                </div>
+                <div>
+                    <label for="edit-media-type" class="block text-xs font-bold uppercase tracking-wider text-text-secondary mb-2">Media Type</label>
+                    <select id="edit-media-type" onchange="toggleSeasonEpisode()" class="w-full px-4.5 py-3 rounded-2xl bg-background text-text border border-border focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition">
+                        <option value="movie">Movie</option>
+                        <option value="tv">TV Show</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4" id="season-episode-fields">
+                <div>
+                    <label for="edit-season" class="block text-xs font-bold uppercase tracking-wider text-text-secondary mb-2">Season</label>
+                    <input type="number" id="edit-season" min="0" placeholder="e.g. 1" class="w-full px-4 py-3 rounded-2xl bg-background text-text border border-border focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition">
+                </div>
+                <div>
+                    <label for="edit-episode" class="block text-xs font-bold uppercase tracking-wider text-text-secondary mb-2">Episode</label>
+                    <input type="number" id="edit-episode" min="1" placeholder="e.g. 1" class="w-full px-4 py-3 rounded-2xl bg-background text-text border border-border focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition">
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label for="edit-lang" class="block text-xs font-bold uppercase tracking-wider text-text-secondary mb-2">Language Code</label>
+                    <input type="text" id="edit-lang" required placeholder="e.g. en, si" class="w-full px-4 py-3 rounded-2xl bg-background text-text border border-border focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition">
+                </div>
+                <div>
+                    <label for="edit-format" class="block text-xs font-bold uppercase tracking-wider text-text-secondary mb-2">Format</label>
+                    <input type="text" id="edit-format" required placeholder="e.g. srt, vtt" class="w-full px-4 py-3 rounded-2xl bg-background text-text border border-border focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition">
+                </div>
+            </div>
+
+            <div class="pt-4 flex gap-3">
+                <button type="button" onclick="closeEditModal()" class="flex-1 px-5 py-3.5 rounded-2xl glass-panel hover:bg-surface-2 text-text font-bold transition">
+                    Cancel
+                </button>
+                <button type="submit" class="flex-1 px-5 py-3.5 rounded-2xl bg-primary hover:bg-primary/90 text-white font-bold transition shadow-lg shadow-primary/20">
+                    Save Changes
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    let currentPage = 1;
+    let currentSearch = '';
+    let currentFilter = 'all';
+    let isLoading = false;
+    let subtitleMap = {}; // Storage for editing details
+
+    const ISO_LANG_MAP = {
+        'si': 'Sinhala (si)',
+        'en': 'English (en)',
+        'es': 'Spanish (es)',
+        'fr': 'French (fr)',
+        'de': 'German (de)',
+        'it': 'Italian (it)',
+        'ru': 'Russian (ru)',
+        'zh': 'Chinese (zh)',
+        'ja': 'Japanese (ja)'
+    };
+
+    function showLoading() {
+        isLoading = true;
+        document.getElementById('loading').classList.remove('hidden');
+        document.getElementById('subtitle-list').classList.add('hidden');
+        document.getElementById('no-results').classList.add('hidden');
+        document.getElementById('pagination').classList.add('hidden');
+        document.getElementById('subtitle-info').classList.add('hidden');
+        document.getElementById('error-display').classList.add('hidden');
+    }
+
+    function hideLoading() {
+        isLoading = false;
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('subtitle-list').classList.remove('hidden');
+    }
+
+    function showError(message) {
+        document.getElementById('error-message').textContent = message;
+        document.getElementById('error-display').classList.remove('hidden');
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('subtitle-list').classList.add('hidden');
+        document.getElementById('no-results').classList.add('hidden');
+        document.getElementById('pagination').classList.add('hidden');
+        document.getElementById('subtitle-info').classList.add('hidden');
+    }
+
+    async function loadSubtitles(page = 1, search = '', filter = 'all') {
+        if (isLoading) return;
+
+        showLoading();
+        currentPage = page;
+        currentSearch = search;
+        currentFilter = filter;
+
+        try {
+            const url = `/api/subtitles/list?page=${page}&page_size=20&search=${encodeURIComponent(search)}&media_type=${filter}`;
+            const response = await fetch(url, {
+                method: 'GET',
+                credentials: 'same-origin',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                if (response.status === 401) {
+                    window.location.href = '/login';
+                    return;
+                }
+                throw new Error(`Server responded with ${response.status}: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            hideLoading();
+
+            const container = document.getElementById('subtitle-list');
+            const subtitles = data.subtitles || [];
+
+            if (subtitles.length === 0) {
+                container.innerHTML = '';
+                document.getElementById('no-results').classList.remove('hidden');
+                document.getElementById('pagination').classList.add('hidden');
+                document.getElementById('subtitle-info').classList.add('hidden');
+                return;
+            }
+
+            document.getElementById('no-results').classList.add('hidden');
+            
+            // Populating subtitleMap
+            subtitleMap = {};
+            subtitles.forEach(sub => {
+                subtitleMap[sub._id] = sub;
+            });
+
+            container.innerHTML = subtitles.map(sub => createSubtitleCard(sub)).join('');
+            updatePagination(data.current_page || page, data.total_pages || 1);
+            updateSubtitleInfo(data);
+
+        } catch (error) {
+            console.error('Error loading subtitles:', error);
+            hideLoading();
+            showError(`Failed to load subtitles: ${error.message}`);
+            showToast(`Failed to load subtitles.`, 'error', 'Load Error');
+        }
+    }
+
+    function createSubtitleCard(sub) {
+        const title = sub.filename || 'Untitled Subtitle';
+        const formattedLang = ISO_LANG_MAP[sub.lang] || `Code: ${sub.lang}`;
+        const mediaIcon = sub.media_type === 'movie' 
+            ? '<i class="fa-solid fa-film text-primary"></i>' 
+            : '<i class="fa-solid fa-tv text-accent"></i>';
+        const typeLabel = sub.media_type === 'movie' ? 'Movie' : 'TV Show';
+        
+        let metaDetails = '';
+        if (sub.media_type === 'tv') {
+            metaDetails = `
+                <span class="px-2 py-0.5 rounded bg-surface border border-hairline text-xs font-semibold">
+                    Season ${sub.season ?? '-'} • Episode ${sub.episode ?? '-'}
+                </span>
+            `;
+        }
+
+        const sizeLabel = sub.size ? `• ${sub.size}` : '';
+
+        return `
+            <div class="glass-panel rounded-3xl p-4 sm:p-5 border border-hairline hover:border-primary/30 transition-all duration-300 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div class="flex-1 min-w-0">
+                    <div class="flex flex-wrap items-center gap-2 mb-2">
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-primary/10 text-primary text-[11px] font-bold uppercase tracking-wider">
+                            ${mediaIcon} ${typeLabel}
+                        </span>
+                        ${metaDetails}
+                        <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-accent/15 text-accent text-[11px] font-bold">
+                            <i class="fa-solid fa-language"></i> ${formattedLang}
+                        </span>
+                        <span class="text-xs text-text-secondary">
+                            IMDb: <a href="https://www.imdb.com/title/${sub.imdb_id}" target="_blank" class="hover:text-primary underline font-mono">${sub.imdb_id}</a>
+                        </span>
+                    </div>
+                    <h3 class="font-bold text-sm sm:text-base text-text break-all" title="${title}">${title}</h3>
+                    <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-text-secondary">
+                        <span class="uppercase font-semibold">${sub.format || 'SRT'}</span>
+                        ${sizeLabel}
+                        <span>• Updated ${formatDate(sub.updated_on)}</span>
+                    </div>
+                </div>
+                
+                <div class="flex gap-2 w-full md:w-auto self-end md:self-center shrink-0">
+                    <button onclick="openEditModal('${sub._id}')"
+                            class="flex-1 md:flex-none inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-primary hover:bg-primary/90 text-white text-xs font-bold transition shadow-lg shadow-primary/20">
+                        <i class="fa-solid fa-pen-to-square"></i> Edit
+                    </button>
+                    <button onclick="deleteSubtitle('${sub._id}', '${escapeHtml(title)}')"
+                            class="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl glass-panel hover:bg-red-500/10 text-red-300 text-xs font-bold transition border border-hairline">
+                        <i class="fa-solid fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    function updatePagination(currentPage, totalPages) {
+        const pagination = document.getElementById('pagination');
+        const paginationInner = document.getElementById('pagination-inner');
+
+        if (totalPages <= 1) {
+            pagination.classList.add('hidden');
+            paginationInner.innerHTML = '';
+            return;
+        }
+
+        pagination.classList.remove('hidden');
+        let paginationHTML = '';
+
+        if (currentPage > 1) {
+            paginationHTML += `
+                <button onclick="loadSubtitles(${currentPage - 1}, '${currentSearch}', '${currentFilter}')"
+                        class="px-4 py-2 rounded-2xl glass-panel hover:bg-surface-2 text-text text-sm font-bold transition border border-hairline">
+                    Previous
+                </button>
+            `;
+        }
+
+        const startPage = Math.max(1, currentPage - 2);
+        const endPage = Math.min(totalPages, currentPage + 2);
+
+        if (startPage > 1) {
+            paginationHTML += `
+                <button onclick="loadSubtitles(1, '${currentSearch}', '${currentFilter}')"
+                        class="px-4 py-2 rounded-2xl glass-panel hover:bg-surface-2 text-text text-sm font-bold transition border border-hairline">
+                    1
+                </button>
+            `;
+            if (startPage > 2) {
+                paginationHTML += `<span class="px-2 text-text-secondary text-sm">...</span>`;
+            }
+        }
+
+        for (let i = startPage; i <= endPage; i++) {
+            const isActive = i === currentPage;
+            paginationHTML += `
+                <button onclick="loadSubtitles(${i}, '${currentSearch}', '${currentFilter}')"
+                        class="px-4 py-2 rounded-2xl text-sm font-bold transition border
+                               ${isActive
+                                   ? 'bg-primary text-white border-primary shadow-lg shadow-primary/20'
+                                   : 'glass-panel hover:bg-surface-2 text-text border-hairline'}">
+                    ${i}
+                </button>
+            `;
+        }
+
+        if (endPage < totalPages) {
+            if (endPage < totalPages - 1) {
+                paginationHTML += `<span class="px-2 text-text-secondary text-sm">...</span>`;
+            }
+            paginationHTML += `
+                <button onclick="loadSubtitles(${totalPages}, '${currentSearch}', '${currentFilter}')"
+                        class="px-4 py-2 rounded-2xl glass-panel hover:bg-surface-2 text-text text-sm font-bold transition border border-hairline">
+                    ${totalPages}
+                </button>
+            `;
+        }
+
+        if (currentPage < totalPages) {
+            paginationHTML += `
+                <button onclick="loadSubtitles(${currentPage + 1}, '${currentSearch}', '${currentFilter}')"
+                        class="px-4 py-2 rounded-2xl glass-panel hover:bg-surface-2 text-text text-sm font-bold transition border border-hairline">
+                    Next
+                </button>
+            `;
+        }
+
+        paginationInner.innerHTML = paginationHTML;
+    }
+
+    function updateSubtitleInfo(data) {
+        const subtitleInfo = document.getElementById('subtitle-info');
+        const resultsInfo = document.getElementById('results-info');
+        const dbInfo = document.getElementById('db-info');
+
+        const totalCount = data.total_count || 0;
+        const pageSize = 20;
+        const current = data.current_page || 1;
+        const startItem = totalCount === 0 ? 0 : ((current - 1) * pageSize) + 1;
+        const endItem = Math.min(current * pageSize, totalCount);
+
+        resultsInfo.textContent = `Showing ${startItem}-${endItem} of ${totalCount} subtitles`;
+
+        if (data.databases_checked && data.databases_checked.length > 0) {
+            dbInfo.textContent = `Databases checked: ${data.databases_checked.join(', ')}`;
+        } else {
+            dbInfo.textContent = '';
+        }
+
+        subtitleInfo.classList.remove('hidden');
+    }
+
+    function setFilter(filter) {
+        const buttons = {
+            'all': document.getElementById('filter-all'),
+            'movie': document.getElementById('filter-movie'),
+            'tv': document.getElementById('filter-tv')
+        };
+
+        Object.keys(buttons).forEach(key => {
+            const btn = buttons[key];
+            if (key === filter) {
+                btn.className = "inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold transition border bg-primary text-white border-primary shadow-lg shadow-primary/20";
+            } else {
+                btn.className = "inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold transition border glass-panel text-text hover:bg-surface-2 border-hairline";
+            }
+        });
+
+        loadSubtitles(1, currentSearch, filter);
+    }
+
+    function searchSubtitles() {
+        const search = document.getElementById('search-input').value.trim();
+        loadSubtitles(1, search, currentFilter);
+    }
+
+    function clearSearch() {
+        document.getElementById('search-input').value = '';
+        loadSubtitles(1, '', currentFilter);
+    }
+
+    function retryLoad() {
+        loadSubtitles(currentPage, currentSearch, currentFilter);
+    }
+
+    // Modal Control
+    function openEditModal(subId) {
+        const sub = subtitleMap[subId];
+        if (!sub) return;
+
+        document.getElementById('edit-id').value = subId;
+        document.getElementById('edit-filename').value = sub.filename || '';
+        document.getElementById('edit-imdb').value = sub.imdb_id || '';
+        document.getElementById('edit-media-type').value = sub.media_type || 'movie';
+        document.getElementById('edit-season').value = sub.season !== undefined && sub.season !== null ? sub.season : '';
+        document.getElementById('edit-episode').value = sub.episode !== undefined && sub.episode !== null ? sub.episode : '';
+        document.getElementById('edit-lang').value = sub.lang || 'en';
+        document.getElementById('edit-format').value = sub.format || 'srt';
+
+        toggleSeasonEpisode();
+
+        const modal = document.getElementById('edit-modal');
+        modal.classList.remove('hidden');
+        setTimeout(() => {
+            modal.classList.remove('opacity-0');
+            modal.querySelector('.transform').classList.remove('scale-95');
+        }, 50);
+    }
+
+    function closeEditModal() {
+        const modal = document.getElementById('edit-modal');
+        modal.classList.add('opacity-0');
+        modal.querySelector('.transform').classList.add('scale-95');
+        setTimeout(() => {
+            modal.classList.add('hidden');
+        }, 300);
+    }
+
+    function toggleSeasonEpisode() {
+        const type = document.getElementById('edit-media-type').value;
+        const container = document.getElementById('season-episode-fields');
+        if (type === 'movie') {
+            container.classList.add('hidden');
+        } else {
+            container.classList.remove('hidden');
+        }
+    }
+
+    async function saveSubtitle(event) {
+        event.preventDefault();
+        const id = document.getElementById('edit-id').value;
+        const data = {
+            filename: document.getElementById('edit-filename').value.trim(),
+            imdb_id: document.getElementById('edit-imdb').value.trim(),
+            media_type: document.getElementById('edit-media-type').value,
+            lang: document.getElementById('edit-lang').value.trim().toLowerCase(),
+            format: document.getElementById('edit-format').value.trim().toLowerCase(),
+            season: document.getElementById('edit-season').value,
+            episode: document.getElementById('edit-episode').value
+        };
+
+        try {
+            const response = await fetch(`/api/subtitles/update?subtitle_id=${encodeURIComponent(id)}`, {
+                method: 'PUT',
+                credentials: 'same-origin',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(data)
+            });
+
+            if (response.ok) {
+                showToast("Subtitle updated successfully", 'success', 'Updated');
+                closeEditModal();
+                loadSubtitles(currentPage, currentSearch, currentFilter);
+            } else {
+                const err = await response.json().catch(() => ({}));
+                showToast(err.detail || "Failed to update subtitle", 'error', 'Update Failed');
+            }
+        } catch (error) {
+            console.error('Error updating subtitle:', error);
+            showToast(`Error: ${error.message}`, 'error', 'Network Error');
+        }
+    }
+
+    async function deleteSubtitle(id, filename) {
+        if (!confirm(`Are you sure you want to delete subtitle:\n"${filename}"?\n\nThis cannot be undone.`)) return;
+
+        try {
+            const response = await fetch(`/api/subtitles/delete?subtitle_id=${encodeURIComponent(id)}`, {
+                method: 'DELETE',
+                credentials: 'same-origin',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (response.ok) {
+                showToast("Subtitle deleted successfully", 'success', 'Deleted');
+                loadSubtitles(currentPage, currentSearch, currentFilter);
+            } else {
+                const err = await response.json().catch(() => ({}));
+                showToast(err.detail || "Failed to delete subtitle", 'error', 'Delete Failed');
+            }
+        } catch (error) {
+            console.error('Error deleting subtitle:', error);
+            showToast(`Error: ${error.message}`, 'error', 'Network Error');
+        }
+    }
+
+    function formatDate(dateStr) {
+        if (!dateStr) return 'N/A';
+        try {
+            const date = new Date(dateStr);
+            return date.toLocaleDateString(undefined, { 
+                year: 'numeric', 
+                month: 'short', 
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        } catch (e) {
+            return dateStr;
+        }
+    }
+
+    function escapeHtml(str) {
+        return String(str || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadSubtitles();
+
+        const searchInput = document.getElementById('search-input');
+        searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                searchSubtitles();
+            }
+        });
+
+        let searchTimeout;
+        searchInput.addEventListener('input', (e) => {
+            clearTimeout(searchTimeout);
+            const val = e.target.value.trim();
+            if (val.length === 0) {
+                searchTimeout = setTimeout(() => {
+                    loadSubtitles(1, '', currentFilter);
+                }, 250);
+            }
+        });
+    });
+</script>
+{% endblock %}

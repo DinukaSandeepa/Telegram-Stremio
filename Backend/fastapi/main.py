@@ -12,7 +12,7 @@ from Backend.fastapi.routes.template_routes import (
     login_page, login_post, logout, set_theme, dashboard_page,
     media_management_page, edit_media_page, public_status_page, stremio_guide_page,
     admin_dashboard_page, admin_subscriptions_page, admin_access_page,
-    custom_catalogs_page, settings_page, tools_page
+    custom_catalogs_page, settings_page, tools_page, subtitles_management_page
 )
 from Backend.fastapi.routes.api_routes import (
     list_media_api, delete_media_api, update_media_api,
@@ -34,7 +34,8 @@ from Backend.fastapi.routes.api_routes import (
     get_auto_catalog_settings_api, update_auto_catalog_settings_api,
     get_settings_api, update_settings_api,
     get_tools_channels_api, start_scan_api, cancel_scan_api, scan_status_api,
-    start_dbcheck_api, cancel_dbcheck_api, dbcheck_status_api, purge_dead_links_api
+    start_dbcheck_api, cancel_dbcheck_api, dbcheck_status_api, purge_dead_links_api,
+    list_subtitles_api, delete_subtitle_api, update_subtitle_api
 )
 
 templates = Jinja2Templates(directory="Backend/fastapi/templates")
@@ -133,6 +134,29 @@ async def delete_media(tmdb_id: int, db_index: int, media_type: str, _: bool = D
 @app.put("/api/media/update")
 async def update_media(request: Request, tmdb_id: int, db_index: int, media_type: str, _: bool = Depends(require_auth)):
     return await update_media_api(request, tmdb_id, db_index, media_type)
+
+@app.get("/media/subtitles", response_class=HTMLResponse)
+async def subtitles_management(request: Request, _: bool = Depends(require_auth)):
+    return await subtitles_management_page(request, _)
+
+@app.get("/api/subtitles/list")
+async def list_subtitles(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(24, ge=1, le=100),
+    search: str = Query(""),
+    media_type: str = Query("all", regex="^(all|movie|tv)$"),
+    _: bool = Depends(require_auth)
+):
+    return await list_subtitles_api(page, page_size, search, media_type)
+
+@app.delete("/api/subtitles/delete")
+async def delete_subtitle(subtitle_id: str, _: bool = Depends(require_auth)):
+    return await delete_subtitle_api(subtitle_id)
+
+@app.put("/api/subtitles/update")
+async def update_subtitle(request: Request, subtitle_id: str, _: bool = Depends(require_auth)):
+    return await update_subtitle_api(subtitle_id, request)
+
 
 @app.delete("/api/media/delete-quality")
 async def delete_movie_quality(tmdb_id: int, db_index: int, id: str, _: bool = Depends(require_auth)):

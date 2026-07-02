@@ -484,12 +484,15 @@
                         <p class="muted mt-3 text-sm break-all">{{ quality.name }}</p>
                     </div>
 
-                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full sm:w-auto xl:min-w-[24rem]">
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 w-full sm:w-auto xl:min-w-[32rem]">
                         <button onclick="copyStreamLink('{{ quality.id }}', '{{ quality.name }}')" class="btn-ui btn-success w-full" title="Copy direct stream link">
                             📋 Copy Link
                         </button>
                         <button onclick="runSpeedTest('{{ quality.id }}', 'movie', '{{ quality.quality }}')" class="btn-ui btn-info w-full">
                             🚀 Speed Test
+                        </button>
+                        <button onclick="openMoveModal('{{ quality.id }}', 'movie', null, null, '{{ quality.name | escape }}')" class="btn-ui btn-primary w-full">
+                            📦 Move File
                         </button>
                         <button onclick="deleteQuality('{{ quality.id }}', this)" class="btn-ui btn-danger w-full">
                             Delete
@@ -559,12 +562,15 @@
                                                     <p class="muted text-xs sm:text-sm mt-2 break-all">{{ quality.name }}</p>
                                                 </div>
 
-                                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 w-full sm:w-auto xl:min-w-[22rem]">
+                                                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 w-full sm:w-auto xl:min-w-[30rem]">
                                                     <button onclick="copyStreamLink('{{ quality.id }}', '{{ quality.name }}')" class="btn-ui btn-success w-full text-xs sm:text-sm">
                                                         📋 Copy
                                                     </button>
                                                     <button onclick="runSpeedTest('{{ quality.id }}', 'tv', '{{ quality.quality }}')" class="btn-ui btn-info w-full text-xs sm:text-sm">
-                                                        🚀 Speed Test
+                                                        🚀 Speed
+                                                    </button>
+                                                    <button onclick="openMoveModal('{{ quality.id }}', 'tv', {{ season.season_number }}, {{ episode.episode_number }}, '{{ quality.name | escape }}')" class="btn-ui btn-primary w-full text-xs sm:text-sm">
+                                                        📦 Move
                                                     </button>
                                                     <button onclick="deleteTVQuality({{ season.season_number }}, {{ episode.episode_number }}, '{{ quality.id }}', this)" class="btn-ui btn-danger w-full text-xs sm:text-sm">
                                                         Delete
@@ -651,6 +657,85 @@
                 <button onclick="closeSpeedTest()" class="btn-ui btn-ghost">
                     Close
                 </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="move-file-modal" class="fixed inset-0 z-50 hidden" aria-modal="true" role="dialog">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="closeMoveModal()"></div>
+
+    <div class="absolute inset-0 flex items-center justify-center p-2 sm:p-4">
+        <div class="glass-card speed-modal-shell rounded-2xl sm:rounded-3xl w-full max-w-lg p-6 sm:p-8 relative">
+            <button onclick="closeMoveModal()" class="absolute top-4 right-4 text-text-secondary hover:text-white text-2xl font-bold leading-none transition-colors">&times;</button>
+
+            <h3 class="text-xl font-bold text-text mb-4 flex items-center gap-2">
+                <i class="fa-solid fa-file-export text-primary"></i>
+                Move Media File
+            </h3>
+
+            <div class="mb-4">
+                <p class="text-xs uppercase tracking-wider text-text-secondary font-bold mb-1">File name</p>
+                <p id="move-filename" class="text-sm font-semibold text-text break-all bg-surface/50 p-2.5 rounded-xl border border-hairline"></p>
+            </div>
+
+            <div class="space-y-4">
+                <div class="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2 items-end">
+                    <div class="flex-1">
+                        <label class="block text-xs font-bold uppercase tracking-wider text-text-secondary mb-2">Search Target Movie / Series</label>
+                        <input type="text" id="move-search-input" placeholder="Search title..." class="w-full px-4 py-2.5 rounded-2xl bg-background text-text border border-border focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition">
+                    </div>
+                    <div>
+                        <button type="button" onclick="searchMoveTarget()" class="btn-ui btn-primary py-2.5 h-[42px] px-4 rounded-2xl">
+                            🔎 Search
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-bold uppercase tracking-wider text-text-secondary mb-2">Target Type</label>
+                        <select id="move-target-type" onchange="toggleMoveTargetTypeFields()" class="w-full px-4 py-2.5 rounded-2xl bg-background text-text border border-border focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition">
+                            <option value="movie">Movie</option>
+                            <option value="tv">TV Show</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold uppercase tracking-wider text-text-secondary mb-2">Release Year (optional)</label>
+                        <input type="number" id="move-search-year" placeholder="e.g. 2024" class="w-full px-4 py-2.5 rounded-2xl bg-background text-text border border-border focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition">
+                    </div>
+                </div>
+
+                <div id="move-search-results" class="max-h-48 overflow-y-auto space-y-2 border border-hairline bg-surface/30 p-2 rounded-2xl hidden">
+                </div>
+
+                <div id="move-selected-preview" class="hidden rounded-2xl border border-primary/30 bg-primary/5 p-3 flex items-start gap-3">
+                    <img id="move-selected-poster" src="/static/placeholder.jpg" class="w-12 h-18 object-cover rounded-lg border border-hairline">
+                    <div class="min-w-0 flex-1">
+                        <h4 id="move-selected-title" class="text-white font-bold text-sm"></h4>
+                        <p id="move-selected-info" class="muted text-xs mt-1"></p>
+                    </div>
+                </div>
+
+                <div id="move-tv-fields" class="grid grid-cols-2 gap-4 hidden">
+                    <div>
+                        <label class="block text-xs font-bold uppercase tracking-wider text-text-secondary mb-2">Target Season</label>
+                        <input type="number" id="move-target-season" min="0" placeholder="e.g. 1" class="w-full px-4 py-2.5 rounded-2xl bg-background text-text border border-border focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold uppercase tracking-wider text-text-secondary mb-2">Target Episode</label>
+                        <input type="number" id="move-target-episode" min="1" placeholder="e.g. 1" class="w-full px-4 py-2.5 rounded-2xl bg-background text-text border border-border focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition">
+                    </div>
+                </div>
+
+                <div class="pt-4 flex gap-3">
+                    <button type="button" onclick="closeMoveModal()" class="flex-1 px-4 py-3 rounded-2xl glass-panel hover:bg-surface-2 text-text font-bold transition">
+                        Cancel
+                    </button>
+                    <button type="button" onclick="executeMove()" class="flex-1 px-4 py-3 rounded-2xl bg-primary hover:bg-primary/90 text-white font-bold transition shadow-lg shadow-primary/20">
+                        Confirm Move
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -1438,7 +1523,175 @@
     }
 
     document.addEventListener('keydown', e => {
-        if (e.key === 'Escape') closeSpeedTest();
+        if (e.key === 'Escape') {
+            closeSpeedTest();
+            closeMoveModal();
+        }
     });
+
+    let _moveQualityId = null;
+    let _moveSourceMediaType = null;
+    let _moveSourceSeason = null;
+    let _moveSourceEpisode = null;
+    let _moveSelectedCandidate = null;
+    let latestMoveResults = [];
+
+    function openMoveModal(qualityId, mediaTypeArg, season, episode, filename) {
+        _moveQualityId = qualityId;
+        _moveSourceMediaType = mediaTypeArg;
+        _moveSourceSeason = season;
+        _moveSourceEpisode = episode;
+        _moveSelectedCandidate = null;
+        latestMoveResults = [];
+
+        document.getElementById('move-filename').textContent = filename || 'Unknown file';
+        document.getElementById('move-search-input').value = '';
+        document.getElementById('move-search-year').value = '';
+        document.getElementById('move-target-type').value = mediaTypeArg;
+        document.getElementById('move-search-results').innerHTML = '';
+        document.getElementById('move-search-results').classList.add('hidden');
+        document.getElementById('move-selected-preview').classList.add('hidden');
+        document.getElementById('move-tv-fields').classList.add('hidden');
+
+        toggleMoveTargetTypeFields();
+
+        document.getElementById('move-file-modal').classList.remove('hidden');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeMoveModal() {
+        document.getElementById('move-file-modal').classList.add('hidden');
+        document.body.style.overflow = '';
+    }
+
+    function toggleMoveTargetTypeFields() {
+        const type = document.getElementById('move-target-type').value;
+        const tvFields = document.getElementById('move-tv-fields');
+        if (type === 'tv') {
+            tvFields.classList.remove('hidden');
+        } else {
+            tvFields.classList.add('hidden');
+        }
+    }
+
+    async function searchMoveTarget() {
+        const query = document.getElementById('move-search-input').value.trim();
+        const type = document.getElementById('move-target-type').value;
+        const year = document.getElementById('move-search-year').value.trim();
+        const resultsEl = document.getElementById('move-search-results');
+
+        if (!query) {
+            showErrorMessage('Please enter a title to search.');
+            return;
+        }
+
+        resultsEl.innerHTML = '<p class="muted text-xs text-center py-4">Searching candidates...</p>';
+        resultsEl.classList.remove('hidden');
+        document.getElementById('move-selected-preview').classList.add('hidden');
+        _moveSelectedCandidate = null;
+
+        try {
+            const params = new URLSearchParams({
+                media_type: type,
+                query
+            });
+            if (year) params.set('year', year);
+
+            const res = await fetch(`/api/media/rescan/search?${params}`);
+            const data = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                resultsEl.innerHTML = `<p class="text-rose-300 text-xs py-2">${data.detail || 'Search failed.'}</p>`;
+                return;
+            }
+
+            const results = data.results || [];
+            latestMoveResults = results;
+            if (!results.length) {
+                resultsEl.innerHTML = '<p class="muted text-xs text-center py-4">No candidates found.</p>';
+                return;
+            }
+
+            resultsEl.innerHTML = results.map((item, idx) => `
+                <div onclick="selectMoveTarget(${idx})" 
+                     class="flex items-center gap-2 p-2 rounded-xl hover:bg-surface-2 cursor-pointer transition border border-hairline">
+                    <img src="${item.poster || '/static/placeholder.jpg'}" class="w-8 h-12 object-cover rounded" onerror="this.src='/static/placeholder.jpg'">
+                    <div class="min-w-0 flex-1">
+                        <p class="text-xs font-bold text-white truncate">${escapeHtml(item.title)}</p>
+                        <p class="text-[10px] text-text-secondary mt-0.5">${escapeHtml(item.year || '—')} • TMDB: ${item.tmdb_id || 'N/A'}</p>
+                    </div>
+                </div>
+            `).join('');
+        } catch (error) {
+            console.error('Move search failed:', error);
+            resultsEl.innerHTML = '<p class="text-rose-300 text-xs py-2">Search failed due to network error.</p>';
+        }
+    }
+
+    function selectMoveTarget(index) {
+        const item = latestMoveResults[index];
+        if (!item) return;
+        _moveSelectedCandidate = item;
+        document.getElementById('move-selected-title').textContent = item.title;
+        document.getElementById('move-selected-info').textContent = `${item.year || '—'} • TMDB: ${item.tmdb_id || 'N/A'}`;
+        document.getElementById('move-selected-poster').src = item.poster || '/static/placeholder.jpg';
+
+        document.getElementById('move-selected-preview').classList.remove('hidden');
+        document.getElementById('move-search-results').classList.add('hidden');
+    }
+
+    async function executeMove() {
+        if (!_moveSelectedCandidate) {
+            showErrorMessage('Please search and select a target movie/series candidate first.');
+            return;
+        }
+
+        const type = document.getElementById('move-target-type').value;
+        const data = {
+            source_tmdb_id: CURRENT_TMDB_ID,
+            source_db_index: CURRENT_DB_INDEX,
+            source_media_type: _moveSourceMediaType,
+            source_season: _moveSourceSeason,
+            source_episode: _moveSourceEpisode,
+            quality_id: _moveQualityId,
+            target_tmdb_id: _moveSelectedCandidate.tmdb_id,
+            target_media_type: type,
+            target_season: type === 'tv' ? document.getElementById('move-target-season').value : null,
+            target_episode: type === 'tv' ? document.getElementById('move-target-episode').value : null
+        };
+
+        if (type === 'tv') {
+            if (!data.target_season || !data.target_episode) {
+                showErrorMessage('Target season and episode numbers are required.');
+                return;
+            }
+        }
+
+        if (!confirm(`Are you sure you want to move this file to "${_moveSelectedCandidate.title}"?`)) {
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/media/move-file', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+
+            const responseData = await res.json().catch(() => ({}));
+            if (res.ok) {
+                showSuccessMessage('File moved successfully.');
+                closeMoveModal();
+                setTimeout(() => {
+                    location.reload();
+                }, 800);
+            } else {
+                showErrorMessage(responseData.detail || 'Failed to move file.');
+            }
+        } catch (error) {
+            console.error('Error moving file:', error);
+            showErrorMessage('Error reassigning file.');
+        }
+    }
 </script>
 {% endblock %}

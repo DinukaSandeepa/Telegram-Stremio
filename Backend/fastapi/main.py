@@ -35,7 +35,7 @@ from Backend.fastapi.routes.api_routes import (
     get_settings_api, update_settings_api,
     get_tools_channels_api, start_scan_api, cancel_scan_api, scan_status_api,
     start_dbcheck_api, cancel_dbcheck_api, dbcheck_status_api, purge_dead_links_api,
-    list_subtitles_api, delete_subtitle_api, update_subtitle_api
+    list_subtitles_api, delete_subtitle_api, update_subtitle_api, move_media_file_api
 )
 
 templates = Jinja2Templates(directory="Backend/fastapi/templates")
@@ -134,6 +134,10 @@ async def delete_media(tmdb_id: int, db_index: int, media_type: str, _: bool = D
 @app.put("/api/media/update")
 async def update_media(request: Request, tmdb_id: int, db_index: int, media_type: str, _: bool = Depends(require_auth)):
     return await update_media_api(request, tmdb_id, db_index, media_type)
+
+@app.post("/api/media/move-file")
+async def move_media_file(request: Request, _: bool = Depends(require_auth)):
+    return await move_media_file_api(request)
 
 @app.get("/media/subtitles", response_class=HTMLResponse)
 async def subtitles_management(request: Request, _: bool = Depends(require_auth)):

@@ -1363,3 +1363,195 @@ async def update_subtitle_api(subtitle_id: str, request: Request):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+async def move_media_file_api(request: Request):
+    try:
+        body = await request.json()
+        source_tmdb_id = int(body["source_tmdb_id"])
+        source_db_index = int(body["source_db_index"])
+        source_media_type = str(body["source_media_type"]).strip().lower()
+        quality_id = str(body["quality_id"]).strip()
+
+        target_tmdb_id = int(body["target_tmdb_id"])
+        target_media_type = str(body["target_media_type"]).strip().lower()
+
+        source_season = body.get("source_season")
+        source_episode = body.get("source_episode")
+        target_season = body.get("target_season")
+        target_episode = body.get("target_episode")
+
+        if source_season is not None and str(source_season).strip() != "":
+            source_season = int(source_season)
+        else:
+            source_season = None
+
+        if source_episode is not None and str(source_episode).strip() != "":
+            source_episode = int(source_episode)
+        else:
+            source_episode = None
+
+        if target_season is not None and str(target_season).strip() != "":
+            target_season = int(target_season)
+        else:
+            target_season = None
+
+        if target_episode is not None and str(target_episode).strip() != "":
+            target_episode = int(target_episode)
+        else:
+            target_episode = None
+
+        # 1. Fetch source document and extract quality_dict
+        source_db_key = f"storage_{source_db_index}"
+        if source_db_key not in db.dbs:
+            raise HTTPException(status_code=400, detail=f"Source database index storage_{source_db_index} not found.")
+
+        source_col = "movie" if source_media_type == "movie" else "tv"
+        source_doc = await db.dbs[source_db_key][source_col].find_one({"tmdb_id": source_tmdb_id})
+        if not source_doc:
+            raise HTTPException(status_code=404, detail="Source media document not found in database.")
+
+        quality_dict = None
+        if source_media_type == "movie":
+            telegram_list = source_doc.get("telegram", [])
+            quality_dict = next((q for q in telegram_list if q.get("id") == quality_id), None)
+            if not quality_dict:
+                raise HTTPException(status_code=404, detail="File quality ID not found in source movie.")
+            new_telegram = [q for q in telegram_list if q.get("id") != quality_id]
+            await db.dbs[source_db_key]["movie"].update_one(
+                {"_id": source_doc["_id"]},
+                {"$set": {"telegram": new_telegram, "updated_on": datetime.utcnow()}}
+            )
+        else:
+            if source_season is None or source_episode is None:
+                raise HTTPException(status_code=400, detail="Source season and episode numbers are required for TV show files.")
+            found_ep = False
+            for season in source_doc.get("seasons", []):
+                if season.get("season_number") == source_season:
+                    for ep in season.get("episodes", []):
+                        if ep.get("episode_number") == source_episode:
+                            telegram_list = ep.get("telegram", [])
+                            quality_dict = next((q for q in telegram_list if q.get("id") == quality_id), None)
+                            if quality_dict:
+                                ep["telegram"] = [q for q in telegram_list if q.get("id") != quality_id]
+                                found_ep = True
+                                break
+                    if found_ep:
+                        break
+            if not found_ep or not quality_dict:
+                raise HTTPException(status_code=404, detail="File quality ID not found in source TV episode.")
+            await db.dbs[source_db_key]["tv"].replace_one({"_id": source_doc["_id"]}, source_doc)
+
+        # 2. Find target document
+        target_doc = None
+        target_db_index = None
+        target_col = "movie" if target_media_type == "movie" else "tv"
+        for i in range(1, db.current_db_index + 1):
+            db_key = f"storage_{i}"
+            if db_key not in db.dbs:
+                continue
+            doc = await db.dbs[db_key][target_col].find_one({"tmdb_id": target_tmdb_id})
+            if doc:
+                target_doc = doc
+                target_db_index = i
+                break
+
+        # 3. Create target document if it does not exist
+        if not target_doc:
+            if target_media_type == "movie":
+                metadata = await fetch_selected_movie_metadata(str(target_tmdb_id))
+            else:
+                metadata = await fetch_selected_tv_metadata(str(target_tmdb_id))
+
+            if not metadata:
+                raise HTTPException(status_code=400, detail="Failed to retrieve target media metadata from TMDb.")
+
+            target_db_index = db.current_db_index
+            target_db_key = f"storage_{target_db_index}"
+
+            if target_media_type == "movie":
+                target_doc = {
+                    "tmdb_id": int(metadata["tmdb_id"]),
+                    "imdb_id": metadata.get("imdb_id"),
+                    "db_index": target_db_index,
+                    "title": metadata["title"],
+                    "genres": metadata.get("genres", []),
+                    "description": metadata.get("description", ""),
+                    "rating": metadata.get("rate", 0.0),
+                    "release_year": int(metadata["year"]) if metadata.get("year") else None,
+                    "poster": metadata.get("poster"),
+                    "backdrop": metadata.get("backdrop"),
+                    "logo": metadata.get("logo"),
+                    "cast": metadata.get("cast", []),
+                    "runtime": metadata.get("runtime"),
+                    "media_type": "movie",
+                    "telegram": [],
+                    "updated_on": datetime.utcnow()
+                }
+            else:
+                target_doc = {
+                    "tmdb_id": int(metadata["tmdb_id"]),
+                    "imdb_id": metadata.get("imdb_id"),
+                    "db_index": target_db_index,
+                    "title": metadata["title"],
+                    "genres": metadata.get("genres", []),
+                    "description": metadata.get("description", ""),
+                    "rating": metadata.get("rate", 0.0),
+                    "release_year": int(metadata["year"]) if metadata.get("year") else None,
+                    "poster": metadata.get("poster"),
+                    "backdrop": metadata.get("backdrop"),
+                    "logo": metadata.get("logo"),
+                    "cast": metadata.get("cast", []),
+                    "runtime": metadata.get("runtime"),
+                    "media_type": "tv",
+                    "seasons": [],
+                    "updated_on": datetime.utcnow()
+                }
+            await db.dbs[target_db_key][target_col].insert_one(target_doc)
+        else:
+            target_db_key = f"storage_{target_db_index}"
+
+        # 4. Push quality_dict to target document
+        if target_media_type == "movie":
+            if "telegram" not in target_doc or target_doc["telegram"] is None:
+                target_doc["telegram"] = []
+            target_doc["telegram"].append(quality_dict)
+            await db.dbs[target_db_key]["movie"].replace_one({"_id": target_doc["_id"]}, target_doc)
+        else:
+            if target_season is None or target_episode is None:
+                raise HTTPException(status_code=400, detail="Target season and episode numbers are required for TV show destination.")
+
+            seasons = target_doc.get("seasons", [])
+            season_dict = next((s for s in seasons if s.get("season_number") == target_season), None)
+            if not season_dict:
+                season_dict = {"season_number": target_season, "episodes": []}
+                seasons.append(season_dict)
+
+            episodes = season_dict.get("episodes", [])
+            episode_dict = next((e for e in episodes if e.get("episode_number") == target_episode), None)
+            if not episode_dict:
+                episode_dict = {
+                    "episode_number": target_episode,
+                    "title": f"Episode {target_episode}",
+                    "telegram": []
+                }
+                episodes.append(episode_dict)
+
+            if "telegram" not in episode_dict or episode_dict["telegram"] is None:
+                episode_dict["telegram"] = []
+
+            episode_dict["telegram"].append(quality_dict)
+            target_doc["seasons"] = seasons
+            target_doc["updated_on"] = datetime.utcnow()
+            await db.dbs[target_db_key]["tv"].replace_one({"_id": target_doc["_id"]}, target_doc)
+
+        return {
+            "success": True,
+            "message": "File reassigned successfully.",
+            "redirect_tmdb_id": target_tmdb_id,
+            "db_index": target_db_index,
+            "media_type": target_media_type
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+

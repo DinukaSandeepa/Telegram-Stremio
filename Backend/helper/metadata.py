@@ -259,8 +259,13 @@ def _first(value):
 
 #----- ── Filename parsing ────────────────────────────────────────────────────────
 def parse_media_name(name: str) -> dict:
+    clean_name = name
+    match = re.search(r"(?i)\.(mkv|mp4|avi|ts|m4v|mov|wmv|webm|flv)\b", name)
+    if match:
+        clean_name = name[:match.end()]
+
     try:
-        ptn = PTN.parse(name) or {}
+        ptn = PTN.parse(clean_name) or {}
     except Exception as e:
         LOGGER.warning(f"PTN parsing failed for {name}: {e}")
         ptn = {}

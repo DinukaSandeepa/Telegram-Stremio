@@ -79,8 +79,13 @@ def _parse_and_validate(filename: str, expected_title: str, season: Optional[int
         LOGGER.info(f"Skipping {filename}: seems to be a split video file")
         return None
 
+    clean_filename = filename
+    match = re.search(r"(?i)\.(mkv|mp4|avi|ts|m4v|mov|wmv|webm|flv)\b", filename)
+    if match:
+        clean_filename = filename[:match.end()]
+
     try:
-        parsed = PTN.parse(filename)
+        parsed = PTN.parse(clean_filename)
     except Exception:
         return None
 

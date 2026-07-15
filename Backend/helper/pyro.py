@@ -173,7 +173,7 @@ def finalize_media_name(title: str, is_split: bool = False) -> str:
     title = re.sub(r"\s+", " ", title).strip().replace(" .", ".")
 
     ext_match = re.search(
-        r"\.(?:mkv|mp4)(?:\.\d{2,3})?(?=$|[^A-Za-z0-9])",
+        r"\.(?:mkv|mp4|avi|ts|m4v|mov|wmv|webm|flv)(?:\.\d{2,3})?(?=$|[^A-Za-z0-9])",
         title,
         flags=re.IGNORECASE,
     )
@@ -182,7 +182,7 @@ def finalize_media_name(title: str, is_split: bool = False) -> str:
 
     if is_split:
         title = strip_part_suffix(title)
-    if not title.endswith((".mkv", ".mp4")):
+    if not title.lower().endswith((".mkv", ".mp4", ".avi", ".ts", ".m4v", ".mov", ".wmv", ".webm", ".flv")):
         title += ".mkv"
     return title
 

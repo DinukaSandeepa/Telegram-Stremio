@@ -162,10 +162,16 @@ def format_released_date(media):
 #----- Build a Stremio stream display name/title from a filename
 def format_stream_details(filename: str, quality: str, size: str, is_split: bool = False) -> tuple[str, str]:
     size_emoji = "📦" if is_split else "💾"
+    match = re.search(r"(?i)\.(mkv|mp4|avi|ts|m4v|mov|wmv|webm|flv)\b", filename)
+    if match:
+        filename = filename[:match.end()]
+
+    display_filename = filename.replace(".", ".\u200B")
+
     try:
         parsed = PTN.parse(filename)
     except Exception:
-        return (f"Telegram {quality}", f"📁 {filename}\n{size_emoji} {size}")
+        return (f"Telegram {quality}", f"📁\u00A0{display_filename}\n{size_emoji}\u00A0{size}")
 
     codec_parts = []
     if parsed.get("codec"):
@@ -184,8 +190,8 @@ def format_stream_details(filename: str, quality: str, size: str, is_split: bool
     stream_name = f"Telegram {resolution} {quality_type}".strip()
 
     stream_title_parts = [
-        f"📁 {filename}",
-        f"{size_emoji} {size}",
+        f"📁\u00A0{display_filename}",
+        f"{size_emoji}\u00A0{size}",
     ]
     if codec_info:
         stream_title_parts.append(codec_info)

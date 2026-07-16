@@ -81,12 +81,32 @@ class Database:
                 await tracking["custom_catalogs"].create_index(
                     [("items.tmdb_id", ASCENDING), ("items.media_type", ASCENDING)]
                 )
+                await self._ensure_subtitle_indexes(tracking)
             except Exception as e:
                 LOGGER.error(f"Failed creating tracking indexes: {e}")
 
         for db_key in list(self.dbs.keys()):
             if db_key.startswith("storage_"):
                 await self._ensure_storage_indexes(db_key)
+
+    async def _ensure_subtitle_indexes(self, tracking) -> None:
+        subs = tracking["subtitles"]
+        try:
+            info = await subs.index_information()
+        except Exception:
+            info = {}
+        for name, spec in info.items():
+            if name == "_id_":
+                continue
+            keys = [k for k, _ in spec.get("key", [])]
+            if keys == ["stream_id"] or (spec.get("unique") and "stream_id" in keys):
+                try:
+                    await subs.drop_index(name)
+                    LOGGER.info(f"Dropped stale subtitle index {name}")
+                except Exception as e:
+                    LOGGER.error(f"Failed dropping subtitle index {name}: {e}")
+        await subs.create_index([("chat_id", ASCENDING), ("msg_id", ASCENDING)], unique=True)
+        await subs.create_index([("imdb_id", ASCENDING), ("season", ASCENDING), ("episode", ASCENDING)])
 
     #----- Ensure per-storage-DB indexes on the movie/tv collections.
     #----- tmdb_id + imdb_id drive catalog hydration and stream lookups.
@@ -1103,6 +1123,34 @@ class Database:
         size_str = get_readable_file_size(total_bytes)
         return encoded, size_str
 
+    async def get_media_ids_by_part(
+        self, channel: int, msg_id: int
+    ) -> Optional[Tuple[Optional[str], Optional[int]]]:
+        try:
+            legacy_hash = await encode_string({"chat_id": channel, "msg_id": msg_id})
+        except Exception:
+            legacy_hash = None
+
+        part_match = {"$elemMatch": {"chat_id": channel, "msg_id": msg_id}}
+        projection = {"imdb_id": 1, "tmdb_id": 1}
+
+        for i in range(1, self.current_db_index + 1):
+            db = self.dbs[f"storage_{i}"]
+
+            movie_or = [{"telegram.parts": part_match}]
+            tv_or = [{"seasons.episodes.telegram.parts": part_match}]
+            if legacy_hash:
+                movie_or.append({"telegram.id": legacy_hash})
+                tv_or.append({"seasons.episodes.telegram.id": legacy_hash})
+
+            doc = await db["movie"].find_one({"$or": movie_or}, projection)
+            if not doc:
+                doc = await db["tv"].find_one({"$or": tv_or}, projection)
+            if doc:
+                return doc.get("imdb_id"), doc.get("tmdb_id")
+
+        return None
+
     async def remove_media_part(self, channel: int, msg_id: int) -> bool:
         try:
             legacy_hash = await encode_string({"chat_id": channel, "msg_id": msg_id})
@@ -1308,6 +1356,13 @@ class Database:
             result.append(quality_to_update)
         return result
 
+    #----- Identity of a non-split stream for duplicate protection (quality + name + size)
+    @staticmethod
+    def _dup_key(quality: dict) -> tuple:
+        name = re.sub(r"\s+", " ", str(quality.get("name") or "").strip().lower())
+        size = str(quality.get("size") or "").strip().lower()
+        return (quality.get("quality"), name, size)
+
     async def _apply_quality_update(
         self, existing_qualities: List[dict], quality_to_update: dict
     ) -> List[dict]:
@@ -1345,7 +1400,13 @@ class Database:
             existing_qualities.append(quality_to_update)
             return existing_qualities
 
-        #----- REPLACE_MODE off: allow duplicate qualities.
+        #----- REPLACE_MODE off: skip exact duplicates when protection is on, else stack.
+        if SettingsManager.current().duplicate_protection:
+            key = self._dup_key(quality_to_update)
+            for q in existing_qualities:
+                if not q.get("group_key") and self._dup_key(q) == key:
+                    LOGGER.info(f"Duplicate protection: skipped existing stream '{quality_to_update.get('name')}'.")
+                    return existing_qualities
         existing_qualities.append(quality_to_update)
         return existing_qualities
 
@@ -1696,10 +1757,6 @@ class Database:
         document = await self.dbs[db_key][collection_name].find_one({"tmdb_id": int(tmdb_id)})
         return convert_objectid_to_str(document) if document else None
 
-    #----- Batch-hydrate media docs for a list of catalog item refs.
-    #----- Groups lookups by (db_index, collection) into a single $in query
-    #----- each, then returns docs in the same order as `refs`. Missing docs
-    #----- are skipped. Replaces N sequential get_document() round-trips.
     async def get_documents(self, refs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if not refs:
             return []
@@ -1861,13 +1918,18 @@ class Database:
 
         return None
 
-    async def delete_media_by_stream_id(self, stream_id_hash: str) -> bool:
+    async def delete_media_by_stream_id(self, stream_id_hash: str, delete_file: bool = False) -> bool:
         for i in range(1, self.current_db_index + 1):
             db = self.dbs[f"storage_{i}"]
             
             #----- Check Movies
             movie = await db["movie"].find_one({"telegram.id": stream_id_hash})
             if movie:
+                if delete_file:
+                    for q in movie.get("telegram", []):
+                        if q.get("id") == stream_id_hash:
+                            await self._queue_quality_deletion(q)
+                            break
                 movie["telegram"] = [q for q in movie.get("telegram", []) if q.get("id") != stream_id_hash]
                 if len(movie["telegram"]) == 0:
                     await db["movie"].delete_one({"_id": movie["_id"]})
@@ -1884,6 +1946,8 @@ class Database:
                     for episode in season.get("episodes", []):
                         for q in episode.get("telegram", []):
                             if q.get("id") == stream_id_hash:
+                                if delete_file:
+                                    await self._queue_quality_deletion(q)
                                 episode["telegram"] = [t for t in episode.get("telegram", []) if t.get("id") != stream_id_hash]
                                 if len(episode["telegram"]) == 0:
                                     season["episodes"] = [e for e in season.get("episodes", []) if e.get("episode_number") != episode.get("episode_number")]
@@ -2024,9 +2088,6 @@ class Database:
             return convert_objectid_to_str(existing)
         return await self.add_api_token(name or f"User {user_id}", user_id=user_id)
 
-    #----- Make a user's token follow their subscription: drop any standalone
-    #----- grant (never-expires / token-expiry) so revoke/extend actually apply.
-    #----- No-op when subscription mode is off (token keeps its own expiry there).
     async def align_token_with_subscription(self, user_id: int) -> None:
         if not SettingsManager.current().subscription:
             return

@@ -41,14 +41,22 @@ from Backend.helper.metadata import (
     fetch_selected_tv_metadata,
     gradient_cover_path,
     resolve_cover_url,
+    search_any_candidates,
     search_movie_candidates,
     search_tv_candidates,
 )
 from Backend.helper.passwords import hash_password, verify_password
 from Backend.helper.pyro import get_readable_file_size, get_readable_time
-from Backend.helper.scan_manager import dbcheck_manager, scan_manager
+from Backend.helper.scan_manager import dbcheck_manager, duplicate_manager, scan_manager
 from Backend.helper.settings_manager import SettingsManager
 from Backend.helper.split_files import strip_part_suffix
+from Backend.helper.subtitles import (
+    list_languages,
+    list_title_subtitles,
+    manual_ingest_subtitle,
+    remove_subtitle,
+    resolve_subtitle_message,
+)
 from Backend.logger import LOGGER
 from Backend.pyrofork.bot import (
     StreamBot,
@@ -1002,6 +1010,95 @@ async def resolve_telegram_api(payload: dict) -> dict:
     return {"status": "success", "data": data}
 
 
+async def resolve_subtitle_api(payload: dict) -> dict:
+    client = _scan_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="No Telegram client is connected yet.")
+    try:
+        data = await resolve_subtitle_message(
+            client, url=payload.get("url"),
+            chat_id=payload.get("chat_id"), msg_id=payload.get("msg_id"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not read that message: {exc}")
+    return {"status": "success", "data": data}
+
+
+async def _resolve_imdb_id(media_type: str, tmdb_id, db_index) -> str:
+    if not (tmdb_id and db_index):
+        raise HTTPException(status_code=400, detail="tmdb_id and db_index are required.")
+    doc = await db.get_document(media_type, int(tmdb_id), int(db_index))
+    if not doc or not doc.get("imdb_id"):
+        raise HTTPException(status_code=404, detail="Title not found.")
+    return doc["imdb_id"]
+
+
+def list_subtitle_languages_api() -> dict:
+    return {"status": "success", "languages": list_languages()}
+
+
+async def list_subtitles_api(media_type: str, tmdb_id, db_index) -> dict:
+    mt = "tv" if media_type in ("tv", "series") else "movie"
+    imdb_id = await _resolve_imdb_id(mt, tmdb_id, db_index)
+    return {"status": "success", "subtitles": await list_title_subtitles(imdb_id)}
+
+
+async def add_subtitles_api(payload: dict) -> dict:
+    media_type = "tv" if payload.get("media_type") in ("tv", "series") else "movie"
+    imdb_id = await _resolve_imdb_id(media_type, payload.get("tmdb_id"), payload.get("db_index"))
+    items = payload.get("items") or []
+    if not isinstance(items, list) or not items:
+        raise HTTPException(status_code=400, detail="Provide at least one subtitle to add.")
+
+    client = _scan_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="No Telegram client is connected yet.")
+
+    added, errors = [], []
+    for item in items:
+        try:
+            season = item.get("season") if media_type == "tv" else None
+            episode = item.get("episode") if media_type == "tv" else None
+            if media_type == "tv" and (not season or not episode):
+                raise ValueError("Season and episode are required for series subtitles.")
+            resolved = await resolve_subtitle_message(
+                client, url=item.get("url"),
+                chat_id=item.get("chat_id"), msg_id=item.get("msg_id"),
+            )
+            doc = await manual_ingest_subtitle(
+                imdb_id, media_type, season, episode,
+                item.get("lang_code") or resolved["lang_code"],
+                resolved["chat_id"], resolved["msg_id"], resolved["name"],
+            )
+            added.append({
+                "name": doc["name"], "lang_label": doc["lang_label"],
+                "season": doc["season"], "episode": doc["episode"],
+            })
+        except ValueError as exc:
+            errors.append(str(exc))
+        except Exception as exc:
+            errors.append(f"Could not add subtitle: {exc}")
+
+    if not added and errors:
+        raise HTTPException(status_code=400, detail=" ".join(errors))
+    message = f"Added {len(added)} subtitle(s)."
+    if errors:
+        message += f" {len(errors)} failed: {' '.join(errors)}"
+    return {"status": "success", "message": message, "added": added, "errors": errors}
+
+
+async def remove_subtitle_api(payload: dict) -> dict:
+    chat_id = payload.get("chat_id")
+    msg_id = payload.get("msg_id")
+    if chat_id in (None, "") or msg_id in (None, ""):
+        raise HTTPException(status_code=400, detail="chat_id and msg_id are required.")
+    if not await remove_subtitle(chat_id, msg_id):
+        raise HTTPException(status_code=404, detail="Subtitle not found.")
+    return {"status": "success", "message": "Subtitle removed."}
+
+
 #----- Build a metadata base (title-level fields) from various sources
 def _metadata_base(source: dict, from_doc: bool = False) -> dict:
     genres = source.get("genres")
@@ -1499,7 +1596,7 @@ async def update_settings_api(payload: dict) -> dict:
         del payload["session_secret"]
 
     #----- Type coercion and validation
-    bool_keys = {"replace_mode", "hide_catalog", "subscription", "show_proxy_and_non_proxy_both", "announce_new_content"}
+    bool_keys = {"replace_mode", "duplicate_protection", "hide_catalog", "subscription", "show_proxy_and_non_proxy_both", "announce_new_content", "delete_on_metadata_fail"}
     for key in bool_keys:
         if key in payload:
             payload[key] = bool(payload[key])
@@ -1581,7 +1678,7 @@ async def update_settings_api(payload: dict) -> dict:
     #----- Only AUTH ∩ ANIME is allowed, because an anime channel is an auth channel
     #----- that's flagged as anime (the receiver only indexes files from auth channels).
     _channel_fields = ("auth_channels", "manual_channels", "global_search_channels",
-                       "anime_channels", "announcement_channel")
+                       "anime_channels", "announcement_channel", "skip_channel")
     if any(field in payload for field in _channel_fields):
         current = SettingsManager.current()
 
@@ -1596,6 +1693,7 @@ async def update_settings_api(payload: dict) -> dict:
             "GLOBAL SEARCH": _norm_ids(payload.get("global_search_channels", list(current.global_search_channels))),
             "ANIME": _norm_ids(payload.get("anime_channels", list(current.anime_channels))),
             "ANNOUNCEMENT": _norm_ids(payload.get("announcement_channel", current.announcement_channel)),
+            "SKIP": _norm_ids(payload.get("skip_channel", current.skip_channel)),
         }
 
         allowed_overlap = frozenset({"AUTH", "ANIME"})
@@ -1615,7 +1713,7 @@ async def update_settings_api(payload: dict) -> dict:
     #----- Strip whitespace from string fields
     for key in ("tmdb_api", "base_url", "upstream_repo", "upstream_branch",
                 "admin_username", "admin_password", "session_secret", "http_proxy_url",
-                "payment_instructions", "payment_qr_url", "announcement_channel"):
+                "payment_instructions", "payment_qr_url", "announcement_channel", "skip_channel"):
         if key in payload and isinstance(payload[key], str):
             payload[key] = payload[key].strip()
 
@@ -1678,19 +1776,24 @@ def _is_personal_media(tmdb_id) -> bool:
 def _session_result(doc: dict) -> dict:
     mt = doc.get("media_type") or doc.get("type") or "movie"
     mt = "tv" if str(mt).lower() in ("tv", "series") else "movie"
+    imdb_id = doc.get("imdb_id") or ""
+    tmdb_id = doc.get("tmdb_id")
+    selected_id = imdb_id if str(imdb_id).startswith("tt") else (str(tmdb_id) if tmdb_id is not None else "")
     return {
-        "tmdb_id": doc.get("tmdb_id"),
+        "tmdb_id": tmdb_id,
         "db_index": doc.get("db_index"),
         "media_type": mt,
         "title": doc.get("title") or "",
         "year": doc.get("release_year") or "",
         "poster": resolve_cover_url(doc.get("poster") or ""),
-        "imdb_id": doc.get("imdb_id") or "",
-        "is_personal": _is_personal_media(doc.get("tmdb_id")),
+        "imdb_id": imdb_id,
+        "selected_id": selected_id,
+        "is_personal": _is_personal_media(tmdb_id),
+        "in_library": True,
     }
 
 
-#----- Search the local library by title or an IMDb/TMDB id/link
+#----- Search the library, then IMDb/Cinemeta + TMDB, by title or an id/link
 async def search_manual_session_api(query: str) -> dict:
     query = (query or "").strip()
     if not query:
@@ -1707,7 +1810,6 @@ async def search_manual_session_api(query: str) -> dict:
         seen.add(key)
         results.append(entry)
 
-    #----- Try an id-based lookup first (imdb tt… or a tmdb id/link)
     default_id = extract_default_id(query)
     if default_id:
         try:
@@ -1726,14 +1828,41 @@ async def search_manual_session_api(query: str) -> dict:
         except Exception as e:
             LOGGER.warning(f"[Manual Session] id lookup failed for '{query}': {e}")
 
-    #----- Fall back to a title search
-    if not results:
+    if not default_id:
         try:
             data = await db.search_documents(query, 1, 20)
             for doc in data.get("results", []):
                 _add(doc)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Search failed: {e}")
+            LOGGER.warning(f"[Manual Session] library search failed for '{query}': {e}")
+
+    library_ids = {(e.get("imdb_id") or "", str(e.get("tmdb_id") or "")) for e in results}
+    try:
+        online = await search_any_candidates(query)
+    except Exception as e:
+        LOGGER.warning(f"[Manual Session] online search failed for '{query}': {e}")
+        online = []
+
+    for cand in online:
+        if not cand.get("selected_id") or not cand.get("title"):
+            continue
+        imdb_id = cand.get("imdb_id") or ""
+        tmdb_id = cand.get("tmdb_id")
+        if (imdb_id, str(tmdb_id or "")) in library_ids:
+            continue
+        results.append({
+            "tmdb_id": tmdb_id,
+            "db_index": None,
+            "media_type": "tv" if cand.get("media_type") == "tv" else "movie",
+            "title": cand.get("title") or "",
+            "year": cand.get("year") or "",
+            "poster": resolve_cover_url(cand.get("poster") or ""),
+            "imdb_id": imdb_id,
+            "selected_id": str(cand.get("selected_id")),
+            "source": cand.get("source"),
+            "is_personal": False,
+            "in_library": False,
+        })
 
     return {"results": results}
 
@@ -1743,6 +1872,51 @@ async def get_manual_session_api() -> dict:
     return {"session": getattr(Backend, "MANUAL_SESSION", None)}
 
 
+async def _set_online_manual_session(payload: dict, media_type: str, selected_id: str) -> dict:
+    if not selected_id:
+        raise HTTPException(status_code=400, detail="A library title or a selected id is required.")
+
+    meta = await (
+        fetch_selected_movie_metadata(selected_id) if media_type == "movie"
+        else fetch_selected_tv_metadata(selected_id)
+    )
+    if not meta:
+        raise HTTPException(status_code=404, detail="Could not fetch metadata for the selected title.")
+
+    imdb_id = meta.get("imdb_id") or ""
+    default_id = imdb_id if str(imdb_id).startswith("tt") else selected_id
+
+    season = payload.get("season")
+    if media_type == "tv" and season is not None and str(season).strip() != "":
+        try:
+            season = int(season)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Season must be a number.")
+    else:
+        season = None
+
+    try:
+        display_tmdb = int(meta.get("tmdb_id")) if meta.get("tmdb_id") is not None else 0
+    except (TypeError, ValueError):
+        display_tmdb = 0
+
+    session = {
+        "tmdb_id": display_tmdb,
+        "db_index": None,
+        "media_type": media_type,
+        "title": meta.get("title") or "",
+        "year": meta.get("release_year") or "",
+        "is_personal": False,
+        "kind": "real",
+        "default_id": default_id,
+        "season": season,
+        "episode": None,
+        "quality": None,
+    }
+    Backend.MANUAL_SESSION = session
+    return {"status": "success", "session": session}
+
+
 #----- Activate a manual upload session targeting an existing library title.
 #----- Real (TMDB/IMDb) titles parse season/episode/quality from each file; personal
 #----- (hand-made) titles need a season for TV since their files carry no metadata.
@@ -1750,9 +1924,11 @@ async def set_manual_session_api(payload: dict) -> dict:
     tmdb_id = payload.get("tmdb_id")
     db_index = payload.get("db_index")
     media_type = _normalize_media_type(payload.get("media_type", "movie"))
+    selected_id = str(payload.get("selected_id") or "").strip()
+    in_library = payload.get("in_library", True) and tmdb_id is not None and db_index is not None
 
-    if tmdb_id is None or db_index is None:
-        raise HTTPException(status_code=400, detail="tmdb_id and db_index are required.")
+    if not in_library:
+        return await _set_online_manual_session(payload, media_type, selected_id)
 
     doc = await db.get_document(media_type, int(tmdb_id), int(db_index))
     if not doc:
@@ -1878,6 +2054,34 @@ async def cancel_dbcheck_api() -> dict:
 
 async def dbcheck_status_api() -> dict:
     return {"status": "success", "data": dbcheck_manager.get_status()}
+
+
+#----- ── Duplicate check & cleanup ──
+async def start_duplicate_check_api() -> dict:
+    result = await duplicate_manager.start()
+    if not result.get("ok"):
+        raise HTTPException(status_code=409, detail=result.get("message", "Could not start duplicate scan."))
+    return {"status": "success", **result}
+
+
+async def cancel_duplicate_check_api() -> dict:
+    result = await duplicate_manager.cancel()
+    return {"status": "success" if result.get("ok") else "error", **result}
+
+
+async def duplicate_check_status_api() -> dict:
+    return {"status": "success", "data": duplicate_manager.get_status()}
+
+
+#----- Remove selected duplicate streams, or (delete_all) keep the newest per group
+async def purge_duplicates_api(payload: dict | None = None) -> dict:
+    payload = payload or {}
+    delete_all = bool(payload.get("delete_all"))
+    stream_ids = payload.get("stream_ids")
+    if not delete_all and (not isinstance(stream_ids, list) or not stream_ids):
+        raise HTTPException(status_code=400, detail="Provide 'stream_ids' or set 'delete_all'.")
+    result = await duplicate_manager.purge(stream_ids, delete_all=delete_all)
+    return {"status": "success" if result.get("ok") else "error", **result}
 
 
 #----- Purge dead links (from last dbcheck, flagged in DB, or a specific set)

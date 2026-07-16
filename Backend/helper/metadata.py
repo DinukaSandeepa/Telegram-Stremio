@@ -865,18 +865,91 @@ def _resolve_default_id(override_id, filename) -> str | None:
     return None
 
 
+def analyze_metadata_failure(filename: str) -> str:
+    if _MULTIPART_RE.search(filename or ""):
+        return "Looks like a multi-part video split (e.g. part1 / cd1) that can't be combined for streaming."
+
+    split_info = parse_split_info(filename or "")
+    parse_target = strip_part_suffix(filename) if split_info else (filename or "")
+
+    try:
+        parsed = parse_media_name(parse_target)
+    except Exception:
+        return "The file name / caption could not be parsed. Give it a clear name like 'Movie Name (2021) 1080p'."
+
+    combined = parse_combined_episodes(parse_target)
+    excess = parsed.get("excess")
+    if not combined and excess and any("combined" in str(item).lower() for item in excess):
+        return "The caption says 'combined' but no season number could be read from it (e.g. name it 'Show S02 Combined')."
+
+    title = parsed.get("title")
+    season = parsed.get("season")
+    episode = parsed.get("episode")
+    quality = parsed.get("quality")
+
+    if not combined and (isinstance(season, list) or isinstance(episode, list)):
+        return ("The name spans multiple seasons (e.g. S01-S03) that can't be filed as one entry. "
+                "Upload one season per file. Combined episode packs within a single season are fine "
+                "when named like 'Show S02 E01-E05' or 'Show S02 Combined'.")
+    if not quality:
+        return "No video quality/resolution was found. Add one to the caption (e.g. 480p, 720p, 1080p or 2160p)."
+    if not title:
+        return "No title could be detected. Rename or caption the file with a clear title."
+
+    return ("Could not match this title on Cinemeta / TMDB. Fix the title/year in the caption, "
+            "or add an IMDb link/id (tt...) or a TMDB link/id, then forward it again.")
+
+
 #----- ── Candidate search (/set command UI) ──────────────────────────────────────
-def _candidate_entry(source, title, year, imdb_id, tmdb_id, poster, backdrop, subtitle) -> dict:
+def _candidate_entry(source, title, year, imdb_id, tmdb_id, poster, backdrop, subtitle, media_type=None) -> dict:
+    selected_id = imdb_id if (source == "imdb" and imdb_id) else (str(tmdb_id) if tmdb_id else (imdb_id or None))
     return {
         "source": source,
+        "media_type": media_type,
         "title": title or "",
         "year": year or "",
         "imdb_id": imdb_id,
         "tmdb_id": tmdb_id,
+        "selected_id": selected_id,
         "poster": poster,
         "backdrop": backdrop,
         "subtitle": subtitle,
     }
+
+
+async def _resolve_id_candidate(default_id, media_type: str) -> dict | None:
+    imdb_id, tmdb_id, _explicit_imdb, use_tmdb = _split_default_id(default_id)
+
+    if imdb_id and not use_tmdb:
+        imdb_type = "movie" if media_type == "movie" else "tvSeries"
+        detail = None
+        try:
+            detail = await _cached_imdb_detail(imdb_id, imdb_type)
+        except Exception as e:
+            LOGGER.warning(f"IMDb id candidate resolve failed for '{imdb_id}': {e}")
+        images = format_imdb_images(imdb_id)
+        if detail and detail.get("title"):
+            return _candidate_entry(
+                "imdb", detail.get("title", ""), detail.get("releaseDetailed", {}).get("year", ""),
+                imdb_id, detail.get("moviedb_id"), detail.get("poster") or images["poster"],
+                detail.get("background") or images["backdrop"], "IMDb / Cinemeta", media_type,
+            )
+        return _candidate_entry("imdb", "", "", imdb_id, None, images["poster"], images["backdrop"], "IMDb / Cinemeta", media_type)
+
+    if tmdb_id:
+        details = await _tmdb_details(media_type, tmdb_id)
+        if not details:
+            return None
+        r_title, r_year = _tmdb_title_year(details, media_type)
+        imdb_ext = getattr(getattr(details, "external_ids", None), "imdb_id", None)
+        return _candidate_entry(
+            "tmdb", r_title, r_year or "", imdb_ext, tmdb_id,
+            format_tmdb_image(getattr(details, "poster_path", None)),
+            format_tmdb_image(getattr(details, "backdrop_path", None), "original"),
+            "TMDb", media_type,
+        )
+
+    return None
 
 
 async def _search_candidates(query: str, media_type: str, year: int | None = None, limit: int = 8) -> list[dict]:
@@ -884,18 +957,27 @@ async def _search_candidates(query: str, media_type: str, year: int | None = Non
     if not query:
         return []
 
+    default_id = extract_default_id(query)
+    if default_id:
+        candidate = await _resolve_id_candidate(default_id, media_type)
+        return [candidate] if candidate else []
+
     imdb_type = "movie" if media_type == "movie" else "tvSeries"
     results: list[dict] = []
     seen: set[tuple[str, str]] = set()
 
     try:
-        imdb_hit = await search_title(query=query, type=imdb_type)
-        if imdb_hit and imdb_hit.get("id"):
-            seen.add(("imdb", imdb_hit["id"]))
+        imdb_hits = await search_title_multi(query=query, type=imdb_type, limit=limit)
+        for hit in imdb_hits:
+            hid = hit.get("id")
+            if not hid or ("imdb", hid) in seen:
+                continue
+            seen.add(("imdb", hid))
+            images = format_imdb_images(hid)
             results.append(_candidate_entry(
-                "imdb", imdb_hit.get("title", ""), imdb_hit.get("year", ""),
-                imdb_hit.get("id"), imdb_hit.get("moviedb_id"),
-                imdb_hit.get("poster", ""), "", "IMDb / Cinemeta",
+                "imdb", hit.get("title", ""), hit.get("year", ""),
+                hid, None, hit.get("poster") or images["poster"], images["backdrop"],
+                "IMDb / Cinemeta", media_type,
             ))
     except Exception as e:
         LOGGER.warning(f"IMDb {media_type} candidate search failed for '{query}': {e}")
@@ -913,7 +995,7 @@ async def _search_candidates(query: str, media_type: str, year: int | None = Non
                 "tmdb", r_title, r_year or "", imdb_id, tmdb_id,
                 format_tmdb_image(getattr(item, "poster_path", None)),
                 format_tmdb_image(getattr(item, "backdrop_path", None), "original"),
-                "TMDb",
+                "TMDb", media_type,
             ))
     except Exception as e:
         LOGGER.warning(f"TMDb {media_type} candidate search failed for '{query}': {e}")
@@ -927,6 +1009,53 @@ async def search_movie_candidates(query: str, year: int | None = None, limit: in
 
 async def search_tv_candidates(query: str, limit: int = 8) -> list[dict]:
     return await _search_candidates(query, "tv", None, limit)
+
+
+async def search_any_candidates(query: str, year: int | None = None, limit: int = 8) -> list[dict]:
+    query = (query or "").strip()
+    if not query:
+        return []
+
+    default_id = extract_default_id(query)
+    if default_id:
+        out: list[dict] = []
+        seen: set[tuple] = set()
+        for mt in ("movie", "tv"):
+            candidate = await _resolve_id_candidate(default_id, mt)
+            if not candidate or not candidate.get("title"):
+                continue
+            key = (candidate.get("imdb_id"), str(candidate.get("tmdb_id")), mt)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(candidate)
+        return out
+
+    results = await search_movie_candidates(query, year, limit)
+    results += await search_tv_candidates(query, limit)
+    return results
+
+
+def build_id_link(imdb_id=None, tmdb_id=None, media_type: str = "movie") -> str | None:
+    if imdb_id and str(imdb_id).startswith("tt"):
+        return f"https://www.imdb.com/title/{imdb_id}/"
+    if tmdb_id is not None and str(tmdb_id).lstrip("-").isdigit() and int(tmdb_id) > 0:
+        path = "movie" if media_type == "movie" else "tv"
+        return f"https://www.themoviedb.org/{path}/{tmdb_id}"
+    return None
+
+
+def caption_with_id(caption: str, metadata_info: dict) -> str | None:
+    link = build_id_link(
+        metadata_info.get("imdb_id"), metadata_info.get("tmdb_id"),
+        metadata_info.get("media_type", "movie"),
+    )
+    if not link:
+        return None
+    base = (caption or "").strip()
+    if extract_default_id(base):
+        return None
+    return f"{base}\n{link}" if base else link
 
 
 #----- ── Manual /set helpers ─────────────────────────────────────────────────────

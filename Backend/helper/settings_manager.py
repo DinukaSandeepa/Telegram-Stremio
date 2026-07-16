@@ -10,6 +10,7 @@ from Backend.logger import LOGGER
 #----- Default values (used when nothing exists in the DB yet)
 _DEFAULTS: Dict[str, Any] = {
     "replace_mode": True,
+    "duplicate_protection": False,
     "hide_catalog": False,
     "auth_channels": [],
     "tmdb_api": "",
@@ -34,6 +35,8 @@ _DEFAULTS: Dict[str, Any] = {
     "manual_channels": [],
     "announce_new_content": False,
     "announcement_channel": "",
+    "skip_channel": "",
+    "delete_on_metadata_fail": False,
 }
 
 
@@ -78,6 +81,10 @@ class Settings:
         return bool(self._d["replace_mode"])
 
     @property
+    def duplicate_protection(self) -> bool:
+        return bool(self._d.get("duplicate_protection", False))
+
+    @property
     def hide_catalog(self) -> bool:
         return bool(self._d["hide_catalog"])
 
@@ -110,8 +117,16 @@ class Settings:
         return bool(self._d.get("announce_new_content", False))
 
     @property
+    def delete_on_metadata_fail(self) -> bool:
+        return bool(self._d.get("delete_on_metadata_fail", False))
+
+    @property
     def announcement_channel(self) -> str:
         return str(self._d.get("announcement_channel") or "").strip()
+
+    @property
+    def skip_channel(self) -> str:
+        return str(self._d.get("skip_channel") or "").strip()
 
     #----- Strings
     @property

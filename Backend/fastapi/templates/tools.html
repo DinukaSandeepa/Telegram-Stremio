@@ -140,7 +140,7 @@
 
         <!-- Setup (hidden while a session is active) -->
         <div id="ms-setup">
-            <label class="s-label">Find a title in your library</label>
+            <label class="s-label">Find a title (your library, IMDb / Cinemeta or TMDB)</label>
             <div class="flex flex-col sm:flex-row gap-2">
                 <input id="ms-query" class="flex-1" placeholder="Title (with or without year), IMDb id/link, or TMDB id/link"
                        style="background:color-mix(in srgb,var(--bg) 60%,transparent);border:1px solid var(--border);border-radius:0.9rem;padding:0.7rem 1rem;color:var(--text);outline:none"
@@ -218,7 +218,7 @@
         <div class="hint">
             <div class="text-sm font-bold" style="color:var(--text)"><i class="fa-solid fa-list-ol"></i> How it works</div>
             <ol style="margin:0.6rem 0 0 1.1rem;padding:0;list-style:decimal;display:flex;flex-direction:column;gap:0.35rem">
-                <li>Search your library and select the title.</li>
+                <li>Search by title (with or without year) or an IMDb / TMDB id or link, then select. Titles not yet in your library are added automatically from the forwarded files.</li>
                 <li>Confirm the options for that title (see the two types below).</li>
                 <li>Click <strong>Start session</strong>.</li>
                 <li>Forward the files to the right channel.</li>
@@ -369,6 +369,70 @@
         </div>
     </div>
 
+    <!-- Duplicate check & cleanup -->
+    <div class="tool-card">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+            <h2 style="margin-bottom:0"><i class="fa-solid fa-clone"></i> Duplicate Check &amp; Cleanup</h2>
+            <span id="dup-status-pill" class="status-pill status-idle">Idle</span>
+        </div>
+
+        <p class="hint mt-3 mb-4">
+            Find streams stored more than once (same quality, name &amp; size) within a title or episode.
+            Remove the ones you pick, or keep the newest of each group in a single click. Deleting also
+            removes the backing Telegram file.
+        </p>
+
+        <div class="stat-grid mb-4">
+            <div class="stat-box"><div class="v" id="dup-scanned">0</div><div class="l">Scanned</div></div>
+            <div class="stat-box"><div class="v" id="dup-groups">0</div><div class="l">Groups</div></div>
+            <div class="stat-box"><div class="v" style="color:#f59e0b" id="dup-count">0</div><div class="l">Redundant</div></div>
+            <div class="stat-box"><div class="v" id="dup-purged">0</div><div class="l">Removed</div></div>
+        </div>
+
+        <div class="flex items-center gap-2 flex-wrap mb-2">
+            <button class="btn btn-primary" id="dup-start-btn" onclick="startDuplicateCheck()">
+                <i class="fa-solid fa-magnifying-glass"></i> Scan for duplicates
+            </button>
+            <button class="btn btn-danger" id="dup-cancel-btn" onclick="cancelDuplicateCheck()" disabled>
+                <i class="fa-solid fa-stop"></i> Stop
+            </button>
+        </div>
+        <div id="dup-current" class="text-sm mb-2" style="color:var(--text-sec)">No scan running</div>
+
+        <div id="dup-purge-progress" class="hidden mb-2">
+            <div class="flex items-center justify-between mb-1 text-sm flex-wrap gap-2">
+                <span class="font-bold" id="dup-purge-label"><i class="fa-solid fa-broom"></i> Removing duplicates…</span>
+                <span style="color:var(--text-sec)">
+                    <span id="dup-purge-done">0</span>/<span id="dup-purge-total">0</span> ·
+                    <i class="fa-regular fa-clock"></i> <span id="dup-purge-elapsed">0s</span> ·
+                    ETA <span id="dup-purge-eta">—</span>
+                </span>
+            </div>
+            <div class="progress-track"><div class="progress-fill" id="dup-purge-bar"></div></div>
+        </div>
+
+        <hr class="divider">
+
+        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <label class="s-label" style="margin-bottom:0">Duplicate groups</label>
+            <div class="flex items-center gap-2">
+                <button class="btn btn-ghost" type="button" id="dup-selected-btn" onclick="purgeDuplicates(false)" disabled>
+                    <i class="fa-solid fa-trash"></i> Delete selected
+                </button>
+                <button class="btn btn-danger" type="button" id="dup-all-btn" onclick="purgeDuplicates(true)" disabled>
+                    <i class="fa-solid fa-broom"></i> Delete all
+                </button>
+            </div>
+        </div>
+        <p class="hint mb-3">
+            Each group keeps checkboxes so you can choose which copies to delete.
+            "Delete all duplicates" keeps the newest copy in every group and removes the rest.
+        </p>
+        <div class="dead-list" id="dup-list">
+            <div class="hint">No duplicates to show yet. Run a scan above.</div>
+        </div>
+    </div>
+
 </div>
 
 <script>
@@ -382,7 +446,7 @@ async function searchManualSession() {
     const box = document.getElementById('ms-results');
     if (!q) { showToast('Type a title, IMDb or TMDB id/link.', 'error', 'Search'); return; }
     state.style.display = '';
-    state.textContent = 'Searching your library…';
+    state.textContent = 'Searching your library and IMDb / TMDB…';
     box.style.display = 'none';
     box.innerHTML = '';
     document.getElementById('ms-selected-box').classList.add('hidden');
@@ -393,11 +457,15 @@ async function searchManualSession() {
         if (!res.ok) throw new Error(data.detail || 'Search failed');
         msResults = data.results || [];
         if (!msResults.length) {
-            state.textContent = 'No matching title found in your library. Add it first from Media Management.';
+            state.textContent = 'No matching title found. Try a different name, or an IMDb / TMDB id or link.';
             return;
         }
         state.textContent = `Found ${msResults.length} title${msResults.length > 1 ? 's' : ''}. Select one:`;
-        box.innerHTML = msResults.map((r, i) => `
+        box.innerHTML = msResults.map((r, i) => {
+            const badge = r.in_library
+                ? `<span class="c-id">${escapeHtml(String(r.year || '—'))} · In library · TMDB ${escapeHtml(String(r.tmdb_id))} · DB #${escapeHtml(String(r.db_index))}</span>`
+                : `<span class="c-id">${escapeHtml(String(r.year || '—'))} · New · ${escapeHtml(String(r.source || '').toUpperCase())} · ${escapeHtml(String(r.selected_id || ''))}</span>`;
+            return `
             <label class="chip" onclick="pickManualResult(${i})">
                 <img src="${escapeHtmlAttr(r.poster) || '/static/placeholder.jpg'}" onerror="this.src='/static/placeholder.jpg'"
                      style="width:2.25rem;height:3.25rem;object-fit:cover;border-radius:0.35rem;flex-shrink:0;background:var(--card)">
@@ -405,10 +473,10 @@ async function searchManualSession() {
                     <span class="c-name block truncate">${escapeHtml(r.title)}
                         <span class="status-pill ${r.media_type === 'tv' ? 'status-running' : 'status-idle'}" style="margin-left:.4rem">${r.media_type === 'tv' ? 'TV' : 'Movie'}</span>
                     </span>
-                    <span class="c-id">${escapeHtml(String(r.year || '—'))} · TMDB ${escapeHtml(String(r.tmdb_id))} · DB #${escapeHtml(String(r.db_index))}</span>
+                    ${badge}
                 </span>
-            </label>
-        `).join('');
+            </label>`;
+        }).join('');
         box.style.display = '';
     } catch (e) {
         state.textContent = e.message || 'Search failed.';
@@ -424,8 +492,9 @@ function pickManualResult(i) {
 
     document.getElementById('ms-sel-poster').src = r.poster || '/static/placeholder.jpg';
     document.getElementById('ms-sel-title').textContent = r.title;
+    const locationText = r.in_library ? `TMDB ${r.tmdb_id} · DB #${r.db_index}` : `New · ${String(r.source || '').toUpperCase()} ${r.selected_id || ''}`;
     document.getElementById('ms-sel-sub').textContent =
-        `${isTv ? 'TV Show' : 'Movie'} · ${isPersonal ? 'Personal' : 'TMDB/IMDb'} · ${r.year || '—'} · TMDB ${r.tmdb_id} · DB #${r.db_index}`;
+        `${isTv ? 'TV Show' : 'Movie'} · ${isPersonal ? 'Personal' : 'TMDB/IMDb'} · ${r.year || '—'} · ${locationText}`;
 
     document.getElementById('ms-real-note').classList.toggle('hidden', isPersonal);
     document.getElementById('ms-real-tv-season').classList.toggle('hidden', isPersonal || !isTv);
@@ -446,7 +515,13 @@ async function startManualSession() {
         tmdb_id: msSelected.tmdb_id,
         db_index: msSelected.db_index,
         media_type: msSelected.media_type,
+        selected_id: msSelected.selected_id,
+        in_library: msSelected.in_library !== false,
     };
+    if (!msSelected.in_library && msSelected.media_type === 'tv') {
+        const rs = document.getElementById('ms-real-season').value.trim();
+        if (rs !== '') payload.season = rs;
+    }
     if (msSelected.is_personal) {
         if (msSelected.media_type === 'tv') {
             const s = document.getElementById('ms-season').value.trim();
@@ -546,6 +621,10 @@ async function loadManualSession() {
 /* ─────────────── State ─────────────── */
 let scanTimer = null;
 let dbcTimer = null;
+let dupTimer = null;
+let dupPurgeTimer = null;
+let dupPurgeActive = false;
+let dupGroups = [];
 let deadSource = "dbcheck";   // where the current dead list came from
 let purgeIds = [];            // explicit ids to purge when source = flagged
 
@@ -856,6 +935,202 @@ async function purgeDeadLinks() {
     }
 }
 
+/* ─────────────── Duplicate check & cleanup ─────────────── */
+async function startDuplicateCheck() {
+    try {
+        const res = await fetch('/api/admin/tools/duplicates/start', { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+            showToast('Duplicate scan started.', 'success', 'Duplicates');
+            startDupPolling();
+        } else {
+            showToast(data.detail || 'Could not start.', 'error', 'Error');
+        }
+    } catch (e) { showToast('Network error.', 'error', 'Error'); }
+}
+
+async function cancelDuplicateCheck() {
+    try {
+        const res = await fetch('/api/admin/tools/duplicates/cancel', { method: 'POST' });
+        const data = await res.json();
+        showToast(data.message || 'Stop requested.', data.ok ? 'info' : 'error', 'Duplicates');
+    } catch (e) { showToast('Network error.', 'error', 'Error'); }
+}
+
+function startDupPolling() {
+    if (dupTimer) clearInterval(dupTimer);
+    pollDup();
+    dupTimer = setInterval(pollDup, 1500);
+}
+
+async function pollDup() {
+    try {
+        const res = await fetch('/api/admin/tools/duplicates/status');
+        const data = await res.json();
+        renderDup(data.data || {});
+    } catch (e) { /* ignore */ }
+}
+
+function renderDup(s) {
+    const pill = document.getElementById('dup-status-pill');
+    const status = s.status || 'idle';
+    pill.className = 'status-pill status-' + status;
+    pill.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+
+    setText('dup-scanned', s.scanned || 0);
+    setText('dup-groups', s.group_count || 0);
+    setText('dup-count', s.duplicate_count || 0);
+    setText('dup-purged', s.purged || 0);
+
+    const startBtn = document.getElementById('dup-start-btn');
+    const cancelBtn = document.getElementById('dup-cancel-btn');
+    if (s.is_running) {
+        startBtn.disabled = true; cancelBtn.disabled = false;
+        document.getElementById('dup-current').textContent = `Scanning… ${s.scanned || 0} titles checked`;
+    } else {
+        startBtn.disabled = false; cancelBtn.disabled = true;
+        document.getElementById('dup-current').textContent =
+            status === 'completed' ? `Done — ${s.group_count || 0} duplicate group(s) found.` :
+            status === 'cancelled' ? 'Stopped.' :
+            status === 'error' ? 'Scan failed.' : 'No scan running';
+        if (dupTimer && ['completed','cancelled','error','idle'].includes(status)) {
+            clearInterval(dupTimer); dupTimer = null;
+        }
+    }
+
+    renderDupPurge(s);
+    dupGroups = s.groups || [];
+    renderDupList();
+}
+
+/* Cleanup progress bar (poll-driven) */
+function renderDupPurge(s) {
+    const box = document.getElementById('dup-purge-progress');
+    const pStatus = s.purge_status || 'idle';
+    const selBtn = document.getElementById('dup-selected-btn');
+    const allBtn = document.getElementById('dup-all-btn');
+    const startBtn = document.getElementById('dup-start-btn');
+
+    if (pStatus === 'running') {
+        dupPurgeActive = true;
+        box.classList.remove('hidden');
+        setText('dup-purge-done', s.purge_done || 0);
+        setText('dup-purge-total', s.purge_total || 0);
+        setText('dup-purge-elapsed', s.purge_elapsed || '0s');
+        setText('dup-purge-eta', s.purge_eta || '—');
+        document.getElementById('dup-purge-bar').style.width = (s.purge_progress || 0) + '%';
+        selBtn.disabled = true; allBtn.disabled = true; startBtn.disabled = true;
+        if (!dupPurgeTimer) startDupPurgePolling();
+        return;
+    }
+
+    if (dupPurgeActive && (pStatus === 'completed' || pStatus === 'error')) {
+        dupPurgeActive = false;
+        if (dupPurgeTimer) { clearInterval(dupPurgeTimer); dupPurgeTimer = null; }
+        setText('dup-purge-done', s.purge_done || 0);
+        setText('dup-purge-total', s.purge_total || 0);
+        setText('dup-purge-elapsed', s.purge_elapsed || '0s');
+        setText('dup-purge-eta', '—');
+        document.getElementById('dup-purge-bar').style.width = '100%';
+        document.getElementById('dup-purge-label').innerHTML = pStatus === 'completed'
+            ? '<i class="fa-solid fa-check"></i> Cleanup complete'
+            : '<i class="fa-solid fa-triangle-exclamation"></i> Cleanup failed';
+        showToast(
+            pStatus === 'completed' ? `Removed ${s.purge_total || 0} duplicate(s).` : (s.error || 'Cleanup failed.'),
+            pStatus === 'completed' ? 'success' : 'error', 'Duplicates'
+        );
+        setTimeout(() => document.getElementById('dup-purge-progress').classList.add('hidden'), 2500);
+    }
+}
+
+function renderDupList() {
+    const list = document.getElementById('dup-list');
+    const selBtn = document.getElementById('dup-selected-btn');
+    const allBtn = document.getElementById('dup-all-btn');
+    const purging = dupPurgeActive;
+
+    if (!dupGroups.length) {
+        list.innerHTML = `<div class="hint">No duplicates to show.</div>`;
+        selBtn.disabled = true; allBtn.disabled = true;
+        return;
+    }
+    list.innerHTML = dupGroups.map(g => `
+        <div class="dead-row" style="flex-direction:column;align-items:stretch;gap:0.5rem">
+            <div class="min-w-0 truncate font-bold">
+                <i class="fa-solid fa-clone" style="color:#f59e0b"></i>
+                ${escapeHtml(g.title || 'Unknown')}
+                <span class="c-id">· ${escapeHtml(g.quality || '')} · ${g.entries.length} copies</span>
+            </div>
+            ${g.entries.map((e, i) => `
+                <label class="flex items-center gap-2 text-sm" style="padding-left:1.25rem">
+                    <input type="checkbox" class="dup-cb" data-id="${escapeHtmlAttr(e.id)}"
+                        ${i === g.entries.length - 1 ? '' : 'checked'}>
+                    <span class="min-w-0 truncate">${escapeHtml(e.name || 'file')}
+                        <span class="c-id">· ${escapeHtml(e.size || '')}${i === g.entries.length - 1 ? ' · newest' : ''}</span>
+                    </span>
+                </label>
+            `).join('')}
+        </div>
+    `).join('');
+    selBtn.disabled = purging; allBtn.disabled = purging;
+}
+
+async function purgeDuplicates(deleteAll) {
+    let body;
+    if (deleteAll) {
+        if (!confirm('Keep the newest copy of every group and permanently delete the rest (including the Telegram files)?')) return;
+        body = { delete_all: true };
+    } else {
+        const ids = Array.from(document.querySelectorAll('#dup-list .dup-cb:checked')).map(cb => cb.dataset.id);
+        if (!ids.length) { showToast('Select at least one copy to delete.', 'error', 'Duplicates'); return; }
+        if (!confirm(`Permanently delete ${ids.length} selected cop${ids.length === 1 ? 'y' : 'ies'} (including the Telegram files)?`)) return;
+        body = { stream_ids: ids };
+    }
+    document.getElementById('dup-selected-btn').disabled = true;
+    document.getElementById('dup-all-btn').disabled = true;
+    document.getElementById('dup-start-btn').disabled = true;
+
+    const box = document.getElementById('dup-purge-progress');
+    box.classList.remove('hidden');
+    document.getElementById('dup-purge-label').innerHTML = '<i class="fa-solid fa-broom"></i> Removing duplicates…';
+    document.getElementById('dup-purge-bar').style.width = '0%';
+    setText('dup-purge-done', 0);
+    setText('dup-purge-eta', '—');
+
+    try {
+        const res = await fetch('/api/admin/tools/duplicates/purge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+            setText('dup-purge-total', data.total || 0);
+            showToast(data.message || 'Cleanup started.', 'info', 'Duplicates');
+            dupPurgeActive = true;
+            startDupPurgePolling();
+        } else {
+            box.classList.add('hidden');
+            showToast(data.message || data.detail || 'Nothing removed.', 'error', 'Duplicates');
+            document.getElementById('dup-selected-btn').disabled = false;
+            document.getElementById('dup-all-btn').disabled = false;
+            document.getElementById('dup-start-btn').disabled = false;
+        }
+    } catch (e) {
+        box.classList.add('hidden');
+        showToast('Network error.', 'error', 'Error');
+        document.getElementById('dup-selected-btn').disabled = false;
+        document.getElementById('dup-all-btn').disabled = false;
+        document.getElementById('dup-start-btn').disabled = false;
+    }
+}
+
+function startDupPurgePolling() {
+    if (dupPurgeTimer) clearInterval(dupPurgeTimer);
+    pollDup();
+    dupPurgeTimer = setInterval(pollDup, 700);
+}
+
 /* ─────────────── Utils ─────────────── */
 function setText(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
 function escapeHtml(str) {
@@ -876,6 +1151,10 @@ pollScan().then(() => {
 pollDbc().then(() => {
     const pill = document.getElementById('dbc-status-pill');
     if (pill.classList.contains('status-running')) startDbcPolling();
+});
+pollDup().then(() => {
+    const pill = document.getElementById('dup-status-pill');
+    if (pill.classList.contains('status-running')) startDupPolling();
 });
 </script>
 

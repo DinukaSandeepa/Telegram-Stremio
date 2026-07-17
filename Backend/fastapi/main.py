@@ -206,7 +206,7 @@ async def edit_media(request: Request, tmdb_id: int, db_index: int, media_type: 
 
 @app.get("/api/media/list")
 async def list_media(
-    media_type: str = Query("movie", regex="^(movie|tv)$"),
+    media_type: str = Query("movie", regex="^(movie|tv|porn)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=100),
     search: str = Query("", max_length=100),
@@ -224,8 +224,8 @@ async def update_media(request: Request, tmdb_id: int, db_index: int, media_type
     return await update_media_api(request, tmdb_id, db_index, media_type)
 
 @app.delete("/api/media/delete-quality")
-async def delete_movie_quality(tmdb_id: int, db_index: int, id: str, _: bool = Depends(require_auth)):
-    return await delete_movie_quality_api(tmdb_id, db_index, id)
+async def delete_movie_quality(tmdb_id: int, db_index: int, id: str, media_type: str = Query("movie", regex="^(movie|porn)$"), _: bool = Depends(require_auth)):
+    return await delete_movie_quality_api(tmdb_id, db_index, id, media_type)
 
 @app.delete("/api/media/delete-tv-quality")
 async def delete_tv_quality(tmdb_id: int, db_index: int, season: int, episode: int, id: str, _: bool = Depends(require_auth)):

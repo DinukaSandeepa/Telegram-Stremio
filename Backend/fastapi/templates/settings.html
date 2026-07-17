@@ -761,6 +761,58 @@
         </p>
     </div>
 
+    <!-- ── Adult Content ──────────────────────────────────────────────── -->
+    <div class="settings-card">
+        <h2><i class="fa-solid fa-fire"></i> Adult Content</h2>
+        <div class="grid-2">
+            <div>
+                <label class="s-label" for="theporndb_api_key">ThePornDB API Key</label>
+                <div style="position:relative">
+                    <input type="password" id="theporndb_api_key" class="s-input"
+                        value="{{ settings.theporndb_api_key }}"
+                        placeholder="Your ThePornDB API key" spellcheck="false"
+                        style="padding-right:2.5rem" autocomplete="off">
+                    <button type="button" onclick="togglePornApiKeyVisibility()"
+                        style="position:absolute;right:0.75rem;top:50%;transform:translateY(-50%);
+                               background:none;border:none;color:var(--text-sec);cursor:pointer">
+                        <i class="fa-solid fa-eye" id="porn-api-eye-icon"></i>
+                    </button>
+                </div>
+            </div>
+            <div>
+                <label class="s-label" for="porn_access_token">Porn Access Token</label>
+                <input type="text" id="porn_access_token" class="s-input"
+                    value="{{ settings.porn_access_token }}" autocomplete="off"
+                    placeholder="Access token" spellcheck="false">
+            </div>
+        </div>
+
+        <hr class="divider">
+
+        <!-- Porn Channels -->
+        <label class="s-label">PORN_CHANNELS
+            <span style="font-weight:400;text-transform:none;letter-spacing:0">
+                — Telegram channels to index adult content from.</span>
+        </label>
+        <div class="multi-list-items" id="porn_channels_items">
+            {% for ch in settings.porn_channels %}
+            <div class="multi-item">
+                <input type="text" class="s-input" value="{{ ch }}" data-list="porn_channels"
+                    placeholder="-100xxxxxxxxxx">
+                <button class="remove-btn" onclick="removeItem(this)" title="Remove">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="add-row">
+            <input type="text" id="porn_channels_new" class="s-input"
+                placeholder="Channel username or -100xxxxx ID"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();addItem('porn_channels')}">
+            <button class="add-btn" onclick="addItem('porn_channels')">+ Add Channel</button>
+        </div>
+    </div>
+
 </div><!-- /settings-root -->
 
 <!-- ── Restart overlay ──────────────────────────────────────────────────── -->
@@ -842,6 +894,19 @@ function togglePwdVisibility() {
     }
 }
 
+/* ── Porn API key visibility ──────────────────────────────────────────── */
+function togglePornApiKeyVisibility() {
+    const input = document.getElementById('theporndb_api_key');
+    const icon  = document.getElementById('porn-api-eye-icon');
+    if (input.type === 'password') {
+        input.type = 'text';
+        icon.className = 'fa-solid fa-eye-slash';
+    } else {
+        input.type = 'password';
+        icon.className = 'fa-solid fa-eye';
+    }
+}
+
 /* ── Session secret generator ─────────────────────────────────────────── */
 function generateSessionSecret() {
     const bytes = new Uint8Array(32);
@@ -914,6 +979,14 @@ function collectAnimeChannels() {
     return out;
 }
 
+function collectPornChannels() {
+    const container = document.getElementById('porn_channels_items');
+    if (!container) return [];
+    return [...container.querySelectorAll('input[data-list="porn_channels"]')]
+        .map(i => i.value.trim())
+        .filter(Boolean);
+}
+
 function removeItem(btn) {
     btn.closest('.multi-item').remove();
 }
@@ -947,6 +1020,9 @@ async function saveSettings() {
         upstream_branch:               document.getElementById('upstream_branch').value.trim(),
         auth_channels:                 collectList('auth_channels'),
         anime_channels:                collectAnimeChannels(),
+        porn_channels:                 collectPornChannels(),
+        theporndb_api_key:             document.getElementById('theporndb_api_key')?.value?.trim() || '',
+        porn_access_token:             document.getElementById('porn_access_token')?.value?.trim() || '',
         subscription:                  document.getElementById('subscription').checked,
         subscription_group_id:         parseInt(document.getElementById('subscription_group_id').value || '0', 10),
         payment_instructions:          document.getElementById('payment_instructions').value.trim(),
@@ -1092,6 +1168,9 @@ function renderSettings(s) {
     rebuildSimpleList('multi_tokens_items', s.multi_tokens, 'text');
     rebuildSimpleList('global_search_channels_items', s.global_search_channels, 'text');
     rebuildSimpleList('manual_channels_items', s.manual_channels, 'text');
+    rebuildSimpleList('porn_channels_items', s.porn_channels, 'text');
+    if (document.getElementById('theporndb_api_key')) document.getElementById('theporndb_api_key').value = s.theporndb_api_key || '';
+    if (document.getElementById('porn_access_token')) document.getElementById('porn_access_token').value = s.porn_access_token || '';
 
     // Databases — needs the live connection-status dot per entry
     rebuildDatabaseList(s.database_list || []);

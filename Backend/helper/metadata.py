@@ -639,6 +639,116 @@ def _is_anime_channel(channel) -> bool:
     return any(str(c).strip().replace("-100", "") == target for c in anime_channels)
 
 
+def _is_porn_channel(channel) -> bool:
+    porn_channels = SettingsManager.current().porn_channels
+    if not porn_channels:
+        return False
+    target = str(channel).replace("-100", "")
+    return any(str(c).strip().replace("-100", "") == target for c in porn_channels)
+
+
+async def fetch_porn_metadata(title: str, encoded_string: str, year: int | None, quality: str) -> dict | None:
+    """Query ThePornDB GraphQL API for scene metadata."""
+    api_key = SettingsManager.current().theporndb_api_key
+    if not api_key:
+        LOGGER.warning("[PORN] ThePornDB API key not configured — skipping metadata fetch")
+        return None
+
+    try:
+        import httpx
+    except ImportError:
+        LOGGER.error("[PORN] httpx not installed – cannot call ThePornDB API")
+        return None
+
+    graphql_query = """
+    query searchScenes($query: String!, $page: Int) {
+        searchScenes(query: $query, page: $page) {
+            scenes {
+                _id
+                title
+                date
+                description
+                posters { url }
+                background { url }
+                performers { name }
+                tags { name }
+                studio { name }
+                duration
+            }
+        }
+    }
+    """
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                "https://theporndb.net/graphql",
+                json={"query": graphql_query, "variables": {"query": title, "page": 1}},
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        LOGGER.error(f"[PORN] ThePornDB API error: {e}")
+        return None
+
+    scenes = (data.get("data") or {}).get("searchScenes", {}).get("scenes") or []
+    if not scenes:
+        LOGGER.info(f"[PORN] No results on ThePornDB for '{title}'")
+        return None
+
+    #----- Pick best match
+    best = None
+    best_score = 0.0
+    for scene in scenes:
+        score = fuzz.token_sort_ratio(title.lower(), (scene.get("title") or "").lower()) / 100
+        scene_year = int(scene["date"][:4]) if scene.get("date") else None
+        if year and scene_year and scene_year == year:
+            score += 0.10
+        if score > best_score:
+            best_score = score
+            best = scene
+
+    if not best or best_score < 0.50:
+        LOGGER.info(f"[PORN] No good match on ThePornDB for '{title}' (best={best_score:.2f})")
+        return None
+
+    scene_year = int(best["date"][:4]) if best.get("date") else year
+
+    #----- Build a synthetic tmdb_id from hash since ThePornDB has its own ID system
+    import hashlib
+    tpdb_id = best.get("_id", "")
+    synthetic_tmdb_id = int(hashlib.sha256(f"tpdb_{tpdb_id}".encode()).hexdigest()[:8], 16) % 900000 + 100000
+
+    posters = best.get("posters") or []
+    bg = best.get("background") or {}
+    performers = [p.get("name") for p in (best.get("performers") or []) if p.get("name")]
+    tags = [t.get("name") for t in (best.get("tags") or []) if t.get("name")]
+
+    return {
+        "tmdb_id": synthetic_tmdb_id,
+        "imdb_id": f"tpdb:{tpdb_id}",
+        "tpdb_id": tpdb_id,
+        "title": best.get("title") or title,
+        "year": scene_year,
+        "genres": tags[:10] if tags else [],
+        "description": best.get("description") or "",
+        "rate": None,
+        "poster": posters[0]["url"] if posters else None,
+        "backdrop": bg.get("url"),
+        "logo": None,
+        "cast": performers,
+        "runtime": str(best.get("duration") or "") if best.get("duration") else None,
+        "media_type": "porn",
+        "quality": quality,
+        "encoded_string": encoded_string,
+        "studio": (best.get("studio") or {}).get("name"),
+    }
+
+
 async def _fetch_anime_tv(title, season, episode, encoded_string, year, quality) -> dict | None:
     try:
         result = await fetch_anime_metadata(title, season, episode, encoded_string, year, quality)
@@ -823,6 +933,20 @@ async def metadata(filename: str, channel: int, msg_id, override_id: str = None,
 
     group_key = f"{channel}:{quality}:{split_info[0]}" if split_info else None
     anime_channel = _is_anime_channel(channel)
+    porn_channel = _is_porn_channel(channel)
+
+    #----- Porn channel → use ThePornDB exclusively
+    if porn_channel:
+        LOGGER.info(f"Fetching Porn metadata: {title} (year={year})")
+        try:
+            result = await fetch_porn_metadata(title, encoded_string, year, quality)
+            if result is not None:
+                result["group_key"] = group_key
+                result["part_number"] = part_number
+            return result
+        except Exception as e:
+            LOGGER.error(f"Error while fetching porn metadata for {filename}: {e}\n{traceback.format_exc()}")
+            return None
 
     try:
         if season and episode:

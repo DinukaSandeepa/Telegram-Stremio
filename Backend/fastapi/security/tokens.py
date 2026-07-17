@@ -13,6 +13,20 @@ SUBSCRIPTION_EXPIRED_VIDEO = "https://bit.ly/4rfjtgd"
 
 #----- Validate an API token and annotate it with subscription/limit status
 async def verify_token(token: str):
+    porn_token = SettingsManager.current().porn_access_token
+    if porn_token and token == porn_token:
+        return {
+            "token": token,
+            "user_id": 99999999,
+            "name": "Porn Access Token",
+            "is_admin": False,
+            "subscription_exempt": True,
+            "is_porn": True,
+            "limit_exceeded": None,
+            "limit_video": None,
+            "subscription_expired": False
+        }
+
     token_data = await db.get_api_token(token)
     if not token_data:
         raise HTTPException(status_code=401, detail="Invalid or expired API token")

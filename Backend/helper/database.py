@@ -12,7 +12,7 @@ from pymongo import ASCENDING, DESCENDING
 
 from Backend.config import Telegram
 from Backend.helper.encrypt import decode_string, encode_string
-from Backend.helper.modal import Episode, MovieSchema, QualityDetail, QualityPart, Season, TVShowSchema
+from Backend.helper.modal import Episode, MovieSchema, PornSchema, QualityDetail, QualityPart, Season, TVShowSchema
 from Backend.helper.settings_manager import SettingsManager
 from Backend.helper.task_manager import delete_message
 from Backend.logger import LOGGER
@@ -120,6 +120,12 @@ class Database:
                 await db[collection_name].create_index([("imdb_id", ASCENDING)])
             except Exception as e:
                 LOGGER.error(f"Failed creating index on {db_key}/{collection_name}: {e}")
+        #----- Porn collection indexes
+        try:
+            await db["porn"].create_index([("tmdb_id", ASCENDING)])
+            await db["porn"].create_index([("imdb_id", ASCENDING)])
+        except Exception as e:
+            LOGGER.error(f"Failed creating index on {db_key}/porn: {e}")
 
     async def disconnect(self):
         for client in self.clients.values():
@@ -1078,7 +1084,7 @@ class Database:
     #----- Map any media_type spelling to its collection name
     @staticmethod
     def _collection_for(media_type: str) -> str:
-        return "tv" if str(media_type).lower() in ("tv", "series") else "movie"
+        return "tv" if str(media_type).lower() in ("tv", "series") else ("porn" if str(media_type).lower() == "porn" else "movie")
 
     #----- Load a doc by tmdb_id, apply an async mutator, and save only if it changed
     async def _edit_media_doc(self, collection_name: str, tmdb_id: int, db_index: int, mutate) -> bool:
@@ -1274,6 +1280,26 @@ class Database:
                 telegram=[quality_detail]
             )
             return await self.update_movie(media)
+        elif metadata_info['media_type'] == "porn":
+            media = PornSchema(
+                tpdb_id=metadata_info.get('tpdb_id'),
+                tmdb_id=metadata_info.get('tmdb_id'),
+                imdb_id=metadata_info.get('imdb_id'),
+                db_index=self.current_db_index,
+                title=metadata_info['title'],
+                genres=metadata_info.get('genres'),
+                description=metadata_info.get('description'),
+                rating=metadata_info.get('rate'),
+                release_year=metadata_info.get('year'),
+                poster=metadata_info.get('poster'),
+                backdrop=metadata_info.get('backdrop'),
+                cast=metadata_info.get('cast'),
+                runtime=metadata_info.get('runtime'),
+                media_type="porn",
+                studio=metadata_info.get('studio'),
+                telegram=[quality_detail]
+            )
+            return await self.update_porn(media)
         else:
             tv_show = TVShowSchema(
                 tmdb_id=metadata_info['tmdb_id'],
@@ -1477,6 +1503,69 @@ class Database:
             if any(keyword in str(e).lower() for keyword in ["storage", "quota"]):
                 return await self._handle_storage_error(self.update_movie, movie_data, total_storage_dbs=total_storage_dbs)
 
+    async def update_porn(self, porn_data: PornSchema) -> Optional[ObjectId]:
+        try:
+            porn_dict = porn_data.dict()
+        except ValidationError as e:
+            LOGGER.error(f"Validation error: {e}")
+            return None
+
+        imdb_id = porn_dict.get("imdb_id")
+        tmdb_id = porn_dict.get("tmdb_id")
+        title = porn_dict["title"]
+        release_year = porn_dict.get("release_year")
+
+        quality_to_update = porn_dict["telegram"][0]
+
+        current_db_key = f"storage_{self.current_db_index}"
+        total_storage_dbs = len(self.dbs) - 1
+
+        existing_doc, existing_db_key, existing_db_index = await self._find_existing_media(
+            "porn", imdb_id, tmdb_id, title, release_year, total_storage_dbs
+        )
+
+        #----- INSERT NEW PORN ----------------
+        if not existing_doc:
+            try:
+                porn_dict["db_index"] = self.current_db_index
+                result = await self.dbs[current_db_key]["porn"].insert_one(porn_dict)
+                return result.inserted_id
+            except Exception as e:
+                LOGGER.error(f"Porn insertion failed in {current_db_key}: {e}")
+                if any(keyword in str(e).lower() for keyword in ["storage", "quota"]):
+                    return await self._handle_storage_error(self.update_porn, porn_data, total_storage_dbs=total_storage_dbs)
+                return None
+
+        #----- UPDATE EXISTING PORN ----------------
+        doc_id = existing_doc["_id"]
+
+        if imdb_id and not existing_doc.get("imdb_id"):
+            existing_doc["imdb_id"] = imdb_id
+        if tmdb_id and not existing_doc.get("tmdb_id"):
+            existing_doc["tmdb_id"] = tmdb_id
+
+        existing_qualities = existing_doc.get("telegram", [])
+        existing_qualities = await self._apply_quality_update(existing_qualities, quality_to_update)
+        existing_doc["telegram"] = existing_qualities
+        existing_doc["updated_on"] = datetime.utcnow()
+
+        if existing_db_index != self.current_db_index:
+            try:
+                if await self._move_document("porn", existing_doc, existing_db_index):
+                    return doc_id
+            except Exception as e:
+                LOGGER.error(f"Error moving porn doc to {current_db_key}: {e}")
+                if any(keyword in str(e).lower() for keyword in ["storage", "quota"]):
+                    return await self._handle_storage_error(self.update_porn, porn_data, total_storage_dbs=total_storage_dbs)
+
+        try:
+            await self.dbs[existing_db_key]["porn"].replace_one({"_id": doc_id}, existing_doc)
+            return doc_id
+        except Exception as e:
+            LOGGER.error(f"Failed to update porn {title} in {existing_db_key}: {e}")
+            if any(keyword in str(e).lower() for keyword in ["storage", "quota"]):
+                return await self._handle_storage_error(self.update_porn, porn_data, total_storage_dbs=total_storage_dbs)
+
     async def update_tv_show(self, tv_show_data: TVShowSchema) -> Optional[ObjectId]:
         try:
             tv_show_dict = tv_show_data.dict()
@@ -1602,6 +1691,23 @@ class Database:
             "tv_shows": [convert_objectid_to_str(result) for result in results],
         }
 
+    async def sort_porn(self, sort_params, page, page_size, genre_filter=None, extra_filter=None):
+        sort_dict = self._get_sort_dict(sort_params) if sort_params else [("updated_on", DESCENDING)]
+        filter_dict = {"genres": {"$in": [genre_filter]}} if genre_filter else {}
+        if extra_filter:
+            filter_dict.update(extra_filter)
+        results, dbs_checked, total_count = await self._paginate_collection(
+            "porn", sort_dict, page, page_size, filter_dict=filter_dict
+        )
+        total_pages = (total_count + page_size - 1) // page_size
+        return {
+            "total_count": total_count,
+            "total_pages": total_pages,
+            "databases_checked": dbs_checked,
+            "current_page": page,
+            "porn": [convert_objectid_to_str(result) for result in results],
+        }
+
     async def search_documents(
             self, 
             query: str, 
@@ -1687,6 +1793,44 @@ class Database:
                 "results": [convert_objectid_to_str(doc) for doc in paged_results]
             }
 
+    async def search_porn_documents(self, query: str, page: int, page_size: int) -> dict:
+        skip = (page - 1) * page_size
+        words = query.split()
+        regex_query = {'$regex': '.*' + '.*'.join(words) + '.*', '$options': 'i'}
+        match_filter = {"$or": [{"title": regex_query}, {"telegram.name": regex_query}]}
+        pipeline = [
+            {"$match": match_filter},
+            {"$project": {
+                "_id": 1, "tmdb_id": 1, "tpdb_id": 1, "title": 1, "genres": 1, "rating": 1,
+                "release_year": 1, "poster": 1, "backdrop": 1, "description": 1,
+                "media_type": 1, "db_index": 1, "imdb_id": 1, "studio": 1
+            }}
+        ]
+        results = []
+        dbs_checked = []
+        active_db_key = f"storage_{self.current_db_index}"
+        active_db = self.dbs[active_db_key]
+        dbs_checked.append(self.current_db_index)
+        porn_results = await active_db["porn"].aggregate(pipeline).to_list(None)
+        results.extend(porn_results)
+        if len(results) < page_size:
+            prev_idx = self.current_db_index - 1
+            while prev_idx > 0 and len(results) < page_size:
+                prev_db = self.dbs[f"storage_{prev_idx}"]
+                prev_results = await prev_db["porn"].aggregate(pipeline).to_list(None)
+                results.extend(prev_results)
+                dbs_checked.append(prev_idx)
+                prev_idx -= 1
+        total_count = 0
+        for db_index in dbs_checked:
+            db = self.dbs[f"storage_{db_index}"]
+            total_count += await db["porn"].count_documents(match_filter)
+        paged_results = results[skip:skip + page_size]
+        return {
+            "total_count": total_count,
+            "results": [convert_objectid_to_str(doc) for doc in paged_results]
+        }
+
 
     async def get_media_details(
         self, 
@@ -1744,6 +1888,13 @@ class Database:
                     movie_doc["type"] = "movie"
                     movie_doc["db_index"] = db_idx
                     return movie_doc
+
+                porn_doc = await self.dbs[db_key]["porn"].find_one({"imdb_id": imdb_id})
+                if porn_doc:
+                    porn_doc = convert_objectid_to_str(porn_doc)
+                    porn_doc["type"] = "porn"
+                    porn_doc["db_index"] = db_idx
+                    return porn_doc
         
         return None
 
@@ -1876,7 +2027,7 @@ class Database:
 
         doc = await self.dbs[db_key][collection_name].find_one({"tmdb_id": tmdb_id})
         if doc:
-            if collection_name == "movie":
+            if collection_name in ("movie", "porn"):
                 for quality in doc.get("telegram", []):
                     await self._queue_quality_deletion(quality)
             else:
@@ -1903,6 +2054,13 @@ class Database:
                 for t in movie["telegram"]:
                     if t.get("id") == stream_id_hash:
                         return movie.get("title")
+
+            #----- Check Porn
+            porn = await db["porn"].find_one({"telegram.id": stream_id_hash})
+            if porn and "telegram" in porn:
+                for t in porn["telegram"]:
+                    if t.get("id") == stream_id_hash:
+                        return porn.get("title")
 
             #----- Check TV Shows
             tv = await db["tv"].find_one({"seasons.episodes.telegram.id": stream_id_hash})
@@ -1939,6 +2097,23 @@ class Database:
                     await db["movie"].replace_one({"_id": movie["_id"]}, movie)
                 return True
 
+            #----- Check Porn
+            porn = await db["porn"].find_one({"telegram.id": stream_id_hash})
+            if porn:
+                if delete_file:
+                    for q in porn.get("telegram", []):
+                        if q.get("id") == stream_id_hash:
+                            await self._queue_quality_deletion(q)
+                            break
+                porn["telegram"] = [q for q in porn.get("telegram", []) if q.get("id") != stream_id_hash]
+                if len(porn["telegram"]) == 0:
+                    await db["porn"].delete_one({"_id": porn["_id"]})
+                    await self.purge_media_from_catalogs(porn.get("tmdb_id"), "porn")
+                else:
+                    porn['updated_on'] = datetime.utcnow()
+                    await db["porn"].replace_one({"_id": porn["_id"]}, porn)
+                return True
+
             #----- Check TV Shows
             tv = await db["tv"].find_one({"seasons.episodes.telegram.id": stream_id_hash})
             if tv:
@@ -1962,7 +2137,7 @@ class Database:
                                 return True
         return False
 
-    async def delete_movie_quality(self, tmdb_id: int, db_index: int, id: str) -> bool:
+    async def delete_movie_quality(self, tmdb_id: int, db_index: int, id: str, media_type: str = "movie") -> bool:
         async def mutate(movie):
             qualities = movie.get("telegram") or []
             for q in qualities:
@@ -1972,7 +2147,8 @@ class Database:
             original_len = len(qualities)
             movie["telegram"] = [q for q in qualities if q.get("id") != id]
             return len(movie["telegram"]) != original_len
-        return await self._edit_media_doc("movie", tmdb_id, db_index, mutate)
+        collection_name = self._collection_for(media_type)
+        return await self._edit_media_doc(collection_name, tmdb_id, db_index, mutate)
 
     async def delete_tv_quality(self, tmdb_id: int, db_index: int, season_number: int, episode_number: int, id: str) -> bool:
         async def mutate(tv):

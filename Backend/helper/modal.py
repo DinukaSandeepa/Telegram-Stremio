@@ -89,3 +89,24 @@ class MovieSchema(BaseModel):
     watch_providers: Optional[List[str]] = Field(default_factory=list)
     auto_tags: Optional[List[str]] = Field(default_factory=list)
     auto_catalog: Optional[dict] = None
+
+
+#----- Porn scene schema
+class PornSchema(BaseModel):
+    tpdb_id: Optional[str] = None
+    tmdb_id: Optional[int] = None
+    imdb_id: Optional[str] = None
+    db_index: int
+    title: str
+    genres: Optional[List[str]] = None
+    description: Optional[str] = None
+    rating: Optional[float] = None
+    release_year: Optional[int] = None
+    poster: Optional[str] = None
+    backdrop: Optional[str] = None
+    cast: Optional[List[str]] = None
+    runtime: Optional[str] = None
+    media_type: str
+    studio: Optional[str] = None
+    updated_on: datetime = Field(default_factory=datetime.utcnow)
+    telegram: Optional[List[QualityDetail]] = None

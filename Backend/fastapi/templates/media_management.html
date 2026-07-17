@@ -42,6 +42,16 @@
                         <i class="fa-solid fa-tv"></i>
                         TV Shows
                     </a>
+                    <a href="/media/manage?media_type=porn{% if custom %}&custom=1{% endif %}"
+                       class="inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold transition border
+                              {% if media_type == 'porn' %}
+                              bg-primary text-white border-primary shadow-lg shadow-primary/20
+                              {% else %}
+                              glass-panel text-text hover:bg-surface-2 border-hairline
+                              {% endif %}">
+                        <i class="fa-solid fa-fire"></i>
+                        Porn Videos
+                    </a>
                     <label class="inline-flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold transition border cursor-pointer select-none
                                   {% if custom %}bg-amber-500/15 text-amber-300 border-amber-500/40{% else %}glass-panel text-text hover:bg-surface-2 border-hairline{% endif %}">
                         <input type="checkbox" {% if custom %}checked{% endif %}
@@ -249,7 +259,7 @@
             hideLoading();
 
             const grid = document.getElementById('media-grid');
-            const mediaKey = mediaType === 'movie' ? 'movies' : 'tv_shows';
+            const mediaKey = mediaType === 'movie' ? 'movies' : (mediaType === 'porn' ? 'porn' : 'tv_shows');
             const mediaItems = data[mediaKey] || [];
 
             if (mediaItems.length === 0) {
@@ -306,7 +316,7 @@
                 <h3 class="font-bold text-sm sm:text-base text-text line-clamp-2 min-h-[2.75rem]" title="${title}">${title}</h3>
                 <div class="mt-2 flex items-center justify-between text-xs text-text-secondary">
                     <span>DB #${item.db_index ?? '-'}</span>
-                    <span>${mediaType === 'movie' ? 'Movie' : 'TV Show'}</span>
+                    <span>${mediaType === 'movie' ? 'Movie' : (mediaType === 'porn' ? 'Porn' : 'TV Show')}</span>
                 </div>
 
                 <div class="mt-4 flex gap-2">

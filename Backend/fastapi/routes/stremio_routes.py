@@ -101,8 +101,15 @@ def _merge_filters(*filters) -> dict:
 
 #----- Whether a title (by imdb id) may be seen by this token, honouring its own visibility
 async def _title_allowed(imdb_id: str, token_data: dict) -> bool:
+    is_porn_token = token_data.get("is_porn", False)
+    is_porn_media = str(imdb_id).startswith("tpdb:")
+    if is_porn_token != is_porn_media:
+        return False
     doc = await db.get_media_details(imdb_id=imdb_id)
     if not doc:
+        # If it's a porn token but it's not found in DB, return False to block scraping/external lookups for standard content
+        if is_porn_token:
+            return False
         return True
     return _token_can_view(doc.get("visibility") or "public", doc.get("allowed_tokens") or [], token_data)
 
@@ -228,9 +235,26 @@ def get_resolution_priority(stream_name: str) -> int:
 #----- Manifest describing the addon's catalogs/resources for this token
 @router.get("/{token}/manifest.json")
 async def get_manifest(token: str, token_data: dict = Depends(verify_token)):
+    is_porn_token = token_data.get("is_porn", False)
+
     if SettingsManager.current().hide_catalog:
         resources = ["stream", "subtitles"]
         catalogs = []
+    elif is_porn_token:
+        resources = ["catalog", "meta", "stream", "subtitles"]
+        catalogs = [
+            {
+                "type": "movie",
+                "id": "latest_porn",
+                "name": "Porn Videos",
+                "extra": [
+                    {"name": "genre", "isRequired": False},
+                    {"name": "skip"},
+                    {"name": "search", "isRequired": False}
+                ],
+                "extraSupported": ["genre", "skip", "search"]
+            }
+        ]
     else:
         resources = ["catalog", "meta", "stream", "subtitles"]
         catalogs = [
@@ -311,14 +335,14 @@ async def get_manifest(token: str, token_data: dict = Depends(verify_token)):
             pass
 
 
-    addon_name = ADDON_NAME
-    addon_desc = "Streams movies and series from your Telegram."
+    addon_name = ADDON_NAME + " (Adult)" if is_porn_token else ADDON_NAME
+    addon_desc = "Streams adult content from your Telegram." if is_porn_token else "Streams movies and series from your Telegram."
     addon_version = ADDON_VERSION
 
     #----- Show expiry info in the addon: token's own expiry first, else the subscription
     try:
         expiry_obj = token_data.get("expires_at")
-        if expiry_obj is None and SettingsManager.current().subscription:
+        if expiry_obj is None and SettingsManager.current().subscription and not is_porn_token:
             user_id = token_data.get("user_id")
             if user_id:
                 user = await db.get_user(int(user_id))
@@ -329,7 +353,7 @@ async def get_manifest(token: str, token_data: dict = Depends(verify_token)):
             expiry_str = expiry_obj.strftime("%d %b %Y").lstrip("0")
             addon_desc = (
                 f"📅 Access active until {expiry_str}.\n"
-                f"Streams movies and series from your Telegram."
+                + addon_desc
             )
             epoch_tag = format(int(expiry_obj.timestamp()) & 0xFFFF, "x")
             addon_version = f"{ADDON_VERSION}-{epoch_tag}"
@@ -337,15 +361,15 @@ async def get_manifest(token: str, token_data: dict = Depends(verify_token)):
         pass
 
     return {
-        "id": f"telegram.media.{token[:8]}",
+        "id": f"telegram.media.porn.{token[:8]}" if is_porn_token else f"telegram.media.{token[:8]}",
         "version": addon_version,
         "name": addon_name,
         "logo": "https://i.postimg.cc/XqWnmDXr/Picsart-25-10-09-08-09-45-867.png",
         "description": addon_desc,
-        "types": ["movie", "series"],
+        "types": ["movie"] if is_porn_token else ["movie", "series"],
         "resources": resources,
         "catalogs": catalogs,
-        "idPrefixes": ["tt", "tg"],
+        "idPrefixes": ["tpdb"] if is_porn_token else ["tt", "tg"],
         "behaviorHints": {
             "configurable": True,
             "configurationRequired": False
@@ -371,6 +395,12 @@ async def get_catalog(token: str, media_type: str, id: str, extra: Optional[str]
     if media_type not in ["movie", "series"]:
         raise HTTPException(status_code=404, detail="Invalid catalog type")
 
+    is_porn_token = token_data.get("is_porn", False)
+    if id == "latest_porn" and not is_porn_token:
+        raise HTTPException(status_code=403, detail="Access denied")
+    if is_porn_token and id != "latest_porn":
+        raise HTTPException(status_code=403, detail="Access denied")
+
     genre_filter = None
     search_query = None
     stremio_skip = 0
@@ -391,7 +421,17 @@ async def get_catalog(token: str, media_type: str, id: str, extra: Optional[str]
     page = (stremio_skip // PAGE_SIZE) + 1
 
     try:
-        if id.startswith("custom_"):
+        if is_porn_token:
+            if search_query:
+                search_results = await db.search_porn_documents(
+                    query=search_query, page=page, page_size=PAGE_SIZE
+                )
+                items = search_results.get("results", [])
+            else:
+                sort_params = [("updated_on", "desc")]
+                data = await db.sort_porn(sort_params, page, PAGE_SIZE, genre_filter=genre_filter)
+                items = data.get("porn", [])
+        elif id.startswith("custom_"):
             catalog_id = id.removeprefix("custom_")
             catalog = await db.get_custom_catalog(catalog_id)
             if not catalog:
@@ -447,6 +487,11 @@ async def get_meta(token: str, media_type: str, id: str, token_data: dict = Depe
 
     media = await db.get_media_details(imdb_id=imdb_id)
     if not media:
+        return {"meta": {}}
+
+    is_porn_token = token_data.get("is_porn", False)
+    is_porn_media = media.get("media_type") == "porn" or str(imdb_id).startswith("tpdb:")
+    if is_porn_token != is_porn_media:
         return {"meta": {}}
 
     if not _token_can_view(media.get("visibility") or "public", media.get("allowed_tokens") or [], token_data):

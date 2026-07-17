@@ -37,6 +37,9 @@ _DEFAULTS: Dict[str, Any] = {
     "announcement_channel": "",
     "skip_channel": "",
     "delete_on_metadata_fail": False,
+    "porn_channels": [],
+    "theporndb_api_key": "",
+    "porn_access_token": "",
 }
 
 
@@ -115,6 +118,18 @@ class Settings:
     @property
     def announce_new_content(self) -> bool:
         return bool(self._d.get("announce_new_content", False))
+
+    @property
+    def porn_channels(self) -> List[str]:
+        return list(self._d.get("porn_channels") or [])
+
+    @property
+    def theporndb_api_key(self) -> str:
+        return str(self._d.get("theporndb_api_key") or "")
+
+    @property
+    def porn_access_token(self) -> str:
+        return str(self._d.get("porn_access_token") or "")
 
     @property
     def delete_on_metadata_fail(self) -> bool:

@@ -106,18 +106,21 @@ def _resolve_covers(items) -> None:
 
 #----- Media management
 async def list_media_api(
-    media_type: str = Query("movie", regex="^(movie|tv)$"),
+    media_type: str = Query("movie", regex="^(movie|tv|porn)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=100),
     search: str = Query("", max_length=100),
     custom: bool = Query(False)
 ):
     try:
-        key = "movies" if media_type == "movie" else "tv_shows"
+        key = "movies" if media_type == "movie" else ("porn" if media_type == "porn" else "tv_shows")
         #----- Custom (manually added) titles carry a negative synthetic tmdb_id
         extra_filter = {"tmdb_id": {"$lt": 0}} if custom else None
         if search:
-            result = await db.search_documents(search, page, page_size)
+            if media_type == "porn":
+                result = await db.search_porn_documents(search, page, page_size)
+            else:
+                result = await db.search_documents(search, page, page_size)
             filtered_results = [
                 item for item in result['results']
                 if item.get('media_type') == media_type and (not custom or int(item.get('tmdb_id') or 0) < 0)
@@ -132,6 +135,8 @@ async def list_media_api(
             }
         elif media_type == "movie":
             resp = await db.sort_movies([], page, page_size, extra_filter=extra_filter)
+        elif media_type == "porn":
+            resp = await db.sort_porn([], page, page_size, extra_filter=extra_filter)
         else:
             resp = await db.sort_tv_shows([], page, page_size, extra_filter=extra_filter)
         _resolve_covers(resp.get(key))
@@ -142,10 +147,13 @@ async def list_media_api(
 async def delete_media_api(
     tmdb_id: int,
     db_index: int,
-    media_type: str = Query(regex="^(movie|tv)$")
+    media_type: str = Query(regex="^(movie|tv|porn)$")
 ):
     try:
-        media_type_formatted = "Movie" if media_type == "movie" else "Series"
+        if media_type == "porn":
+            media_type_formatted = "Porn"
+        else:
+            media_type_formatted = "Movie" if media_type == "movie" else "Series"
         result = await db.delete_document(media_type_formatted, tmdb_id, db_index)
         if result:
             return {"message": "Media deleted successfully"}
@@ -158,7 +166,7 @@ async def update_media_api(
     request: Request,
     tmdb_id: int,
     db_index: int,
-    media_type: str = Query(regex="^(movie|tv)$")
+    media_type: str = Query(regex="^(movie|tv|porn)$")
 ):
     try:
         update_data = await request.json()
@@ -215,7 +223,7 @@ async def update_media_api(
 async def get_media_details_api(
     tmdb_id: int,
     db_index: int,
-    media_type: str = Query(regex="^(movie|tv)$")
+    media_type: str = Query(regex="^(movie|tv|porn)$")
 ):
     try:
         result = await db.get_document(media_type, tmdb_id, db_index)
@@ -226,9 +234,9 @@ async def get_media_details_api(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-async def delete_movie_quality_api(tmdb_id: int, db_index: int, id: str):
+async def delete_movie_quality_api(tmdb_id: int, db_index: int, id: str, media_type: str = Query("movie", regex="^(movie|porn)$")):
     try:
-        result = await db.delete_movie_quality(tmdb_id, db_index, id)
+        result = await db.delete_movie_quality(tmdb_id, db_index, id, media_type=media_type)
         if result:
             return {"message": "Quality deleted successfully"}
         else:
@@ -1601,7 +1609,7 @@ async def update_settings_api(payload: dict) -> dict:
         if key in payload:
             payload[key] = bool(payload[key])
 
-    list_str_keys = {"auth_channels", "multi_tokens", "extra_databases", "global_search_channels", "anime_channels", "manual_channels"}
+    list_str_keys = {"auth_channels", "multi_tokens", "extra_databases", "global_search_channels", "anime_channels", "manual_channels", "porn_channels"}
     for key in list_str_keys:
         if key in payload:
             if not isinstance(payload[key], list):
@@ -1674,11 +1682,26 @@ async def update_settings_api(payload: dict) -> dict:
             cleaned.append(channel)
         payload["manual_channels"] = cleaned
 
+    if "porn_channels" in payload:
+        cleaned = []
+        for channel in payload["porn_channels"]:
+            channel = str(channel).strip()
+            if not channel:
+                continue
+            try:
+                int(channel.replace("-100", ""))
+            except ValueError:
+                raise HTTPException(status_code=400,
+                    detail=f"Invalid porn channel id: {channel}"
+                    )
+            cleaned.append(channel)
+        payload["porn_channels"] = cleaned
+
     #----- The same channel id may not appear in more than one channel field.
     #----- Only AUTH ∩ ANIME is allowed, because an anime channel is an auth channel
     #----- that's flagged as anime (the receiver only indexes files from auth channels).
     _channel_fields = ("auth_channels", "manual_channels", "global_search_channels",
-                       "anime_channels", "announcement_channel", "skip_channel")
+                       "anime_channels", "announcement_channel", "skip_channel", "porn_channels")
     if any(field in payload for field in _channel_fields):
         current = SettingsManager.current()
 
@@ -1694,6 +1717,7 @@ async def update_settings_api(payload: dict) -> dict:
             "ANIME": _norm_ids(payload.get("anime_channels", list(current.anime_channels))),
             "ANNOUNCEMENT": _norm_ids(payload.get("announcement_channel", current.announcement_channel)),
             "SKIP": _norm_ids(payload.get("skip_channel", current.skip_channel)),
+            "PORN": _norm_ids(payload.get("porn_channels", list(current.porn_channels))),
         }
 
         allowed_overlap = frozenset({"AUTH", "ANIME"})

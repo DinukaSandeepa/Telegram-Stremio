@@ -546,10 +546,15 @@ async def get_meta(token: str, media_type: str, id: str, token_data: dict = Depe
 @router.get("/{token}/subtitles/{media_type}/{id}.json")
 async def get_subtitles(token: str, media_type: str, id: str, extra: Optional[str] = None, token_data: dict = Depends(verify_token)):
     try:
-        parts = id.split(":")
-        imdb_id = parts[0]
-        season = int(parts[1]) if len(parts) > 1 else None
-        episode = int(parts[2]) if len(parts) > 2 else None
+        if id.startswith("tpdb:"):
+            imdb_id = id
+            season = None
+            episode = None
+        else:
+            parts = id.split(":")
+            imdb_id = parts[0]
+            season = int(parts[1]) if len(parts) > 1 else None
+            episode = int(parts[2]) if len(parts) > 2 else None
     except (ValueError, IndexError):
         return {"subtitles": []}
 
@@ -689,10 +694,15 @@ async def get_streams(
         }
 
     try:
-        parts = id.split(":")
-        imdb_id = parts[0]
-        season_num = int(parts[1]) if len(parts) > 1 else None
-        episode_num = int(parts[2]) if len(parts) > 2 else None
+        if id.startswith("tpdb:"):
+            imdb_id = id
+            season_num = None
+            episode_num = None
+        else:
+            parts = id.split(":")
+            imdb_id = parts[0]
+            season_num = int(parts[1]) if len(parts) > 1 else None
+            episode_num = int(parts[2]) if len(parts) > 2 else None
     except (ValueError, IndexError):
         raise HTTPException(status_code=400, detail="Invalid Stremio ID format")
 

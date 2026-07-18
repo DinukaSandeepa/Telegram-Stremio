@@ -539,6 +539,26 @@ class ScanManager:
                     else:
                         await storage["movie"].delete_one({"_id": movie["_id"]})
 
+            async for porn in storage["porn"].find({}):
+                remaining = []
+                changed = False
+                for q in porn.get("telegram", []):
+                    try:
+                        decoded = await decode_string(q["id"])
+                        if int(decoded["chat_id"]) == channel_int:
+                            purged += 1
+                            changed = True
+                            continue
+                    except Exception:
+                        pass
+                    remaining.append(q)
+                if changed:
+                    if remaining:
+                        porn["telegram"] = remaining
+                        await storage["porn"].replace_one({"_id": porn["_id"]}, porn)
+                    else:
+                        await storage["porn"].delete_one({"_id": porn["_id"]})
+
             async for tv in storage["tv"].find({}):
                 tv_changed = False
                 for season in tv.get("seasons", []):

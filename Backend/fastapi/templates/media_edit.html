@@ -502,7 +502,7 @@
             </div>
         </div>
 
-        {% if media_type == 'movie' and media_details.telegram %}
+        {% if media_type in ['movie', 'porn'] and media_details.telegram %}
         <div class="space-y-3" id="movie-quality-list">
             {% set sorted_qualities = media_details.telegram|sort(attribute='quality') %}
             {% for quality in sorted_qualities %}
@@ -1079,7 +1079,7 @@
         if (!confirm(`Are you sure you want to delete ${id}?`)) return;
 
         try {
-            const response = await fetch(`/api/media/delete-quality?tmdb_id=${tmdbId}&db_index=${dbIndex}&id=${encodeURIComponent(id)}`, {
+            const response = await fetch(`/api/media/delete-quality?tmdb_id=${tmdbId}&db_index=${dbIndex}&id=${encodeURIComponent(id)}&media_type=${mediaType}`, {
                 method: 'DELETE'
             });
 

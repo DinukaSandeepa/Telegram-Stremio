@@ -39,11 +39,13 @@ from Backend.helper.metadata import (
     extract_default_id,
     fetch_selected_movie_metadata,
     fetch_selected_tv_metadata,
+    fetch_selected_porn_metadata,
     gradient_cover_path,
     resolve_cover_url,
     search_any_candidates,
     search_movie_candidates,
     search_tv_candidates,
+    search_porn_candidates,
 )
 from Backend.helper.passwords import hash_password, verify_password
 from Backend.helper.pyro import get_readable_file_size, get_readable_time
@@ -935,6 +937,8 @@ async def search_media_rescan_api(media_type: str, query: str, year: int | None 
         results = await search_movie_candidates(query=query, year=year)
     elif media_type == "tv":
         results = await search_tv_candidates(query=query)
+    elif media_type == "porn":
+        results = await search_porn_candidates(query=query)
     else:
         raise HTTPException(status_code=400, detail="Invalid media_type.")
 
@@ -956,6 +960,8 @@ async def apply_media_rescan_api(request: Request, tmdb_id: int, db_index: int, 
         metadata = await fetch_selected_movie_metadata(selected_id)
     elif media_type == "tv":
         metadata = await fetch_selected_tv_metadata(selected_id)
+    elif media_type == "porn":
+        metadata = await fetch_selected_porn_metadata(selected_id)
     else:
         raise HTTPException(status_code=400, detail="Invalid media_type.")
 
@@ -988,10 +994,15 @@ async def resolve_manual_metadata_api(media_type: str, selected_id: str) -> dict
     if not selected_id:
         raise HTTPException(status_code=400, detail="selected_id is required.")
     mt = _normalize_media_type(media_type)
-    data = await (
-        fetch_selected_movie_metadata(selected_id) if mt == "movie"
-        else fetch_selected_tv_metadata(selected_id)
-    )
+    if mt == "movie":
+        data = await fetch_selected_movie_metadata(selected_id)
+    elif mt == "tv":
+        data = await fetch_selected_tv_metadata(selected_id)
+    elif mt == "porn":
+        data = await fetch_selected_porn_metadata(selected_id)
+    else:
+        raise HTTPException(status_code=400, detail="Invalid media_type.")
+
     if not data:
         raise HTTPException(status_code=404, detail="Could not fetch metadata for the selected title.")
     if data.get("poster"):

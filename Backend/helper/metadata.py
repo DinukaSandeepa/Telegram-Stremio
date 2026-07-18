@@ -1603,3 +1603,145 @@ async def fetch_selected_tv_metadata(selected_id: str) -> dict | None:
         "runtime": str(imdb_tv.get("runtime") or ""),
         "media_type": "tv",
     }
+
+
+async def search_porn_candidates(query: str, limit: int = 8) -> list[dict]:
+    query = (query or "").strip()
+    if not query:
+        return []
+
+    default_id = extract_default_id(query)
+    if default_id:
+        clean_id = default_id.strip()
+        if ":" in clean_id:
+            clean_id = clean_id.split(":", 1)[1]
+        elif "_" in clean_id:
+            clean_id = clean_id.split("_", 1)[1]
+
+        if is_uuid(clean_id):
+            best = await fetch_porn_metadata(
+                title="manual-rescan", encoded_string=None, year=None, quality="HD", override_id=clean_id
+            )
+            if best:
+                tpdb_id = best.get("tpdb_id") or clean_id
+                selected_id = f"tpdb:{tpdb_id}"
+                studio = best.get("studio") or "Unknown Studio"
+                cast = best.get("cast") or []
+                cast_str = f" ({', '.join(cast)})" if cast else ""
+                subtitle = f"{studio}{cast_str}"
+                return [{
+                    "source": "tpdb",
+                    "media_type": "porn",
+                    "title": best.get("title", ""),
+                    "year": str(best.get("year", "")),
+                    "imdb_id": f"tpdb:{tpdb_id}",
+                    "tmdb_id": best.get("tmdb_id"),
+                    "selected_id": selected_id,
+                    "poster": best.get("poster"),
+                    "backdrop": best.get("backdrop"),
+                    "subtitle": subtitle,
+                }]
+
+    api_key = SettingsManager.current().theporndb_api_key
+    if not api_key:
+        return []
+
+    graphql_query = """
+    query searchScene($term: String!, $limit: Int) {
+        searchScene(term: $term, limit: $limit) {
+            id
+            title
+            date
+            duration
+            images {
+                url
+                width
+                height
+            }
+            studio {
+                name
+            }
+            performers {
+                performer {
+                    name
+                }
+            }
+        }
+    }
+    """
+
+    results = []
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                "https://theporndb.net/graphql",
+                json={"query": graphql_query, "variables": {"term": query, "limit": limit}},
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            scenes = (data.get("data") or {}).get("searchScene") or []
+            for scene in scenes:
+                tpdb_id = scene.get("id")
+                title = scene.get("title")
+                date_str = scene.get("date") or ""
+                year = date_str[:4] if len(date_str) >= 4 else ""
+                
+                images = scene.get("images") or []
+                poster_url = None
+                backdrop_url = None
+                for img in images:
+                    url = img.get("url")
+                    w = img.get("width")
+                    h = img.get("height")
+                    if url:
+                        if w and h:
+                            if w > h:
+                                if not backdrop_url:
+                                    backdrop_url = url
+                            else:
+                                if not poster_url:
+                                    poster_url = url
+                        else:
+                            if not poster_url:
+                                poster_url = url
+                if not poster_url and backdrop_url:
+                    poster_url = backdrop_url
+                if not backdrop_url and poster_url:
+                    backdrop_url = poster_url
+
+                studio = (scene.get("studio") or {}).get("name") or "Unknown Studio"
+                performers = [p.get("performer", {}).get("name") for p in (scene.get("performers") or []) if p.get("performer")]
+                perf_str = f" ({', '.join(performers)})" if performers else ""
+                subtitle = f"{studio}{perf_str}"
+
+                results.append({
+                    "source": "tpdb",
+                    "media_type": "porn",
+                    "title": title,
+                    "year": year,
+                    "imdb_id": f"tpdb:{tpdb_id}",
+                    "tmdb_id": None,
+                    "selected_id": f"tpdb:{tpdb_id}",
+                    "poster": poster_url,
+                    "backdrop": backdrop_url,
+                    "subtitle": subtitle,
+                })
+    except Exception as e:
+        LOGGER.error(f"[PORN] search_porn_candidates API error for query '{query}': {e}")
+
+    return results
+
+
+async def fetch_selected_porn_metadata(selected_id: str) -> dict | None:
+    selected_id = str(selected_id).strip()
+    if not selected_id:
+        return None
+    data = await fetch_porn_metadata(
+        title="manual-rescan", encoded_string=None, year=None, quality="HD", override_id=selected_id
+    )
+    return _to_selection_payload(data, "porn") if data else None

@@ -647,18 +647,39 @@ def _is_porn_channel(channel) -> bool:
     return any(str(c).strip().replace("-100", "") == target for c in porn_channels)
 
 
-async def fetch_porn_metadata(title: str, encoded_string: str, year: int | None, quality: str) -> dict | None:
-    """Query ThePornDB GraphQL API for scene metadata."""
-    api_key = SettingsManager.current().theporndb_api_key
-    if not api_key:
-        LOGGER.warning("[PORN] ThePornDB API key not configured — skipping metadata fetch")
-        return None
+def clean_porn_title(title: str) -> str:
+    # 1. Replace dots, underscores, dashes, and path delimiters with space
+    title_clean = re.sub(r'[._\-]', ' ', title)
+    # 2. Match and remove dates (YY MM DD or YYYY MM DD, optional delimiters)
+    title_clean = re.sub(r'\b(20)?\d{2}\s+\d{2}\s+\d{2}\b', ' ', title_clean)
+    # 3. Match and remove common noise words (case-insensitive)
+    noise_patterns = [
+        r'\bxxx\b', r'\bhardcore\b', r'\bpov\b', r'\bhevc\b', r'\bx26[45]\b',
+        r'\b1080p\b', r'\b720p\b', r'\b4k\b', r'\b2160p\b', r'\bhd\b',
+        r'\bdvdrip\b', r'\bhdrip\b', r'\bweb-dl\b', r'\bglam porn\b',
+        r'\bfrench\b', r'\bdutch\b', r'\bgerman\b', r'\bspanish\b', r'\bjapanese\b', r'\brussian\b'
+    ]
+    for pattern in noise_patterns:
+        title_clean = re.sub(pattern, ' ', title_clean, flags=re.IGNORECASE)
+    # 4. Collapse spaces and strip
+    title_clean = re.sub(r'\s+', ' ', title_clean).strip()
+    return title_clean
 
+
+async def fetch_porn_metadata(title: str, encoded_string: str, year: int | None, quality: str) -> dict | None:
+    """Query ThePornDB GraphQL API for scene metadata, with fallback query logic and local metadata generation."""
     try:
         import httpx
     except ImportError:
         LOGGER.error("[PORN] httpx not installed – cannot call ThePornDB API")
         return None
+
+    cleaned = clean_porn_title(title)
+    LOGGER.info(f"[PORN] Cleaned search query: '{cleaned}' (original: '{title}')")
+
+    api_key = SettingsManager.current().theporndb_api_key
+    best = None
+    best_score = 0.0
 
     graphql_query = """
     query searchScenes($query: String!, $page: Int) {
@@ -679,73 +700,107 @@ async def fetch_porn_metadata(title: str, encoded_string: str, year: int | None,
     }
     """
 
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                "https://theporndb.net/graphql",
-                json={"query": graphql_query, "variables": {"query": title, "page": 1}},
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception as e:
-        LOGGER.error(f"[PORN] ThePornDB API error: {e}")
-        return None
+    if api_key and cleaned:
+        queries_to_try = [cleaned]
+        words = cleaned.split()
+        if len(words) > 2:
+            queries_to_try.append(" ".join(words[1:]))  # Fallback 1: remove first word
+        if len(words) > 3:
+            queries_to_try.append(" ".join(words[:3]))   # Fallback 2: first 3 words
 
-    scenes = (data.get("data") or {}).get("searchScenes", {}).get("scenes") or []
-    if not scenes:
-        LOGGER.info(f"[PORN] No results on ThePornDB for '{title}'")
-        return None
+        for q in queries_to_try:
+            if not q or len(q) < 3:
+                continue
+            try:
+                LOGGER.info(f"[PORN] Querying ThePornDB with: '{q}'")
+                async with httpx.AsyncClient(timeout=15) as client:
+                    resp = await client.post(
+                        "https://theporndb.net/graphql",
+                        json={"query": graphql_query, "variables": {"query": q, "page": 1}},
+                        headers={
+                            "Authorization": f"Bearer {api_key}",
+                            "Content-Type": "application/json",
+                        },
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+            except Exception as e:
+                LOGGER.error(f"[PORN] ThePornDB API error for query '{q}': {e}")
+                continue
 
-    #----- Pick best match
-    best = None
-    best_score = 0.0
-    for scene in scenes:
-        score = fuzz.token_sort_ratio(title.lower(), (scene.get("title") or "").lower()) / 100
-        scene_year = int(scene["date"][:4]) if scene.get("date") else None
-        if year and scene_year and scene_year == year:
-            score += 0.10
-        if score > best_score:
-            best_score = score
-            best = scene
+            scenes = (data.get("data") or {}).get("searchScenes", {}).get("scenes") or []
+            if scenes:
+                for scene in scenes:
+                    scene_title = scene.get("title") or ""
+                    score = fuzz.token_sort_ratio(cleaned.lower(), scene_title.lower()) / 100
+                    scene_year = int(scene["date"][:4]) if scene.get("date") else None
+                    if year and scene_year and scene_year == year:
+                        score += 0.10
+                    if score > best_score:
+                        best_score = score
+                        best = scene
 
-    if not best or best_score < 0.50:
-        LOGGER.info(f"[PORN] No good match on ThePornDB for '{title}' (best={best_score:.2f})")
-        return None
+                if best and best_score >= 0.40:
+                    LOGGER.info(f"[PORN] Found match with query '{q}' (score={best_score:.2f})")
+                    break
+                else:
+                    best = None
 
-    scene_year = int(best["date"][:4]) if best.get("date") else year
-
-    #----- Build a synthetic tmdb_id from hash since ThePornDB has its own ID system
     import hashlib
-    tpdb_id = best.get("_id", "")
-    synthetic_tmdb_id = int(hashlib.sha256(f"tpdb_{tpdb_id}".encode()).hexdigest()[:8], 16) % 900000 + 100000
+    #----- If we matched a scene successfully on ThePornDB
+    if best:
+        scene_year = int(best["date"][:4]) if best.get("date") else year
+        tpdb_id = best.get("_id", "")
+        synthetic_tmdb_id = int(hashlib.sha256(f"tpdb_{tpdb_id}".encode()).hexdigest()[:8], 16) % 900000 + 100000
+        posters = best.get("posters") or []
+        bg = best.get("background") or {}
+        performers = [p.get("name") for p in (best.get("performers") or []) if p.get("name")]
+        tags = [t.get("name") for t in (best.get("tags") or []) if t.get("name")]
 
-    posters = best.get("posters") or []
-    bg = best.get("background") or {}
-    performers = [p.get("name") for p in (best.get("performers") or []) if p.get("name")]
-    tags = [t.get("name") for t in (best.get("tags") or []) if t.get("name")]
+        return {
+            "tmdb_id": synthetic_tmdb_id,
+            "imdb_id": f"tpdb:{tpdb_id}",
+            "tpdb_id": tpdb_id,
+            "title": best.get("title") or cleaned,
+            "year": scene_year,
+            "genres": tags[:10] if tags else [],
+            "description": best.get("description") or "",
+            "rate": None,
+            "poster": posters[0]["url"] if posters else None,
+            "backdrop": bg.get("url"),
+            "logo": None,
+            "cast": performers,
+            "runtime": str(best.get("duration") or "") if best.get("duration") else None,
+            "media_type": "porn",
+            "quality": quality,
+            "encoded_string": encoded_string,
+            "studio": (best.get("studio") or {}).get("name"),
+        }
+
+    #----- Fallback: always return valid local metadata so the file gets indexed successfully
+    LOGGER.info(f"[PORN] No match on ThePornDB. Creating fallback local metadata for '{title}'")
+    synthetic_tmdb_id = int(hashlib.sha256(f"fallback_{cleaned}".encode()).hexdigest()[:8], 16) % 900000 + 100000
+    words = cleaned.split()
+    fallback_studio = words[0] if words else "Unknown Studio"
 
     return {
         "tmdb_id": synthetic_tmdb_id,
-        "imdb_id": f"tpdb:{tpdb_id}",
-        "tpdb_id": tpdb_id,
-        "title": best.get("title") or title,
-        "year": scene_year,
-        "genres": tags[:10] if tags else [],
-        "description": best.get("description") or "",
+        "imdb_id": f"tpdb:fallback_{synthetic_tmdb_id}",
+        "tpdb_id": f"fallback_{synthetic_tmdb_id}",
+        "title": cleaned,
+        "year": year,
+        "genres": ["Adult", "Porn", fallback_studio],
+        "description": f"Video titled '{cleaned}' indexed from Telegram.",
         "rate": None,
-        "poster": posters[0]["url"] if posters else None,
-        "backdrop": bg.get("url"),
+        "poster": None,
+        "backdrop": None,
         "logo": None,
-        "cast": performers,
-        "runtime": str(best.get("duration") or "") if best.get("duration") else None,
+        "cast": [],
+        "runtime": None,
         "media_type": "porn",
         "quality": quality,
         "encoded_string": encoded_string,
-        "studio": (best.get("studio") or {}).get("name"),
+        "studio": fallback_studio,
     }
 
 
@@ -917,12 +972,20 @@ async def metadata(filename: str, channel: int, msg_id, override_id: str = None,
         #----- Season pack with no episode number -> whole-season combined.
         combined = {"season": season, "start": None, "end": None}
         episode = 1
+    porn_channel = _is_porn_channel(channel)
+
     if not quality:
-        LOGGER.warning(f"Skipping {filename}: No resolution (parsed={parsed})")
-        return None
+        if porn_channel:
+            quality = "HD"
+        else:
+            LOGGER.warning(f"Skipping {filename}: No resolution (parsed={parsed})")
+            return None
     if not title:
-        LOGGER.info(f"No title parsed from: {filename} (parsed={parsed})")
-        return None
+        if porn_channel:
+            title = filename
+        else:
+            LOGGER.info(f"No title parsed from: {filename} (parsed={parsed})")
+            return None
 
     default_id = _resolve_default_id(override_id, filename)
 

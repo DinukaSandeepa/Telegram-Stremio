@@ -180,9 +180,13 @@ class ScanManager:
             if stream_hash:
                 if await storage["movie"].find_one({"telegram.id": stream_hash}):
                     return True
+                if await storage["porn"].find_one({"telegram.id": stream_hash}):
+                    return True
                 if await storage["tv"].find_one({"seasons.episodes.telegram.id": stream_hash}):
                     return True
             if await storage["movie"].find_one({"telegram.parts": part_match}):
+                return True
+            if await storage["porn"].find_one({"telegram.parts": part_match}):
                 return True
             if await storage["tv"].find_one({"seasons.episodes.telegram.parts": part_match}):
                 return True

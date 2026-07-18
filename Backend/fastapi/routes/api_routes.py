@@ -74,7 +74,7 @@ from Backend.pyrofork.bot import (
 async def get_system_stats_api():
     try:
         db_stats = await db.get_database_stats()
-        total_movies, total_tv_shows = db.content_totals(db_stats)
+        total_movies, total_tv_shows, total_porn = db.content_totals(db_stats)
         api_tokens = await db.get_all_api_tokens()
         
         return {
@@ -85,6 +85,7 @@ async def get_system_stats_api():
             "version": __version__,
             "movies": total_movies,
             "tv_shows": total_tv_shows,
+            "porn_videos": total_porn,
             "databases": db_stats,
             "total_databases": len(db_stats),
             "current_db_index": db.current_db_index,
@@ -2181,7 +2182,7 @@ LOG_FILE = "log.txt"
 #----- Aggregate content + system metrics across all storage DBs (was /stats)
 async def get_db_stats_api() -> dict:
     try:
-        total_movies = total_tv = total_episodes = total_streams = total_db_size = 0
+        total_movies = total_tv = total_episodes = total_porn = total_streams = total_db_size = 0
 
         for i in range(1, db.current_db_index + 1):
             storage = db.dbs.get(f"storage_{i}")
@@ -2199,6 +2200,10 @@ async def get_db_stats_api() -> dict:
                         total_episodes += 1
                         total_streams += len(episode.get("telegram", []))
 
+            total_porn += await storage["porn"].count_documents({})
+            async for porn in storage["porn"].find({}, {"telegram": 1}):
+                total_streams += len(porn.get("telegram", []))
+
             try:
                 total_db_size += (await storage.command("dbStats")).get("dataSize", 0)
             except Exception:
@@ -2211,6 +2216,7 @@ async def get_db_stats_api() -> dict:
                 "movies": total_movies,
                 "tv_shows": total_tv,
                 "episodes": total_episodes,
+                "porn_videos": total_porn,
                 "streams": total_streams,
                 "uptime": get_readable_time(int(time() - StartTime)),
                 "db_size": get_readable_file_size(total_db_size),

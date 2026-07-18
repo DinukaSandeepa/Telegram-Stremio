@@ -74,7 +74,7 @@ async def dashboard_page(request: Request, _: bool = Depends(require_auth)):
 
     try:
         db_stats = await db.get_database_stats()
-        total_movies, total_tv_shows = db.content_totals(db_stats)
+        total_movies, total_tv_shows, total_porn = db.content_totals(db_stats)
 
         now = time.time()
         PRUNE_SECONDS = 3
@@ -117,6 +117,7 @@ async def dashboard_page(request: Request, _: bool = Depends(require_auth)):
             "version": __version__,
             "movies": total_movies,
             "tv_shows": total_tv_shows,
+            "porn_videos": total_porn,
             "databases": db_stats,
             "total_databases": len(db_stats),
             "current_db_index": db.current_db_index,
@@ -182,11 +183,11 @@ async def edit_media_page(request: Request, tmdb_id: int, db_index: int, media_t
 async def public_status_page(request: Request):
     try:
         db_stats = await db.get_database_stats()
-        total_movies, total_tv_shows = db.content_totals(db_stats)
+        total_movies, total_tv_shows, total_porn = db.content_totals(db_stats)
         public_stats = {
             "status": "operational",
             "uptime": "99.9%",
-            "total_content": total_movies + total_tv_shows,
+            "total_content": total_movies + total_tv_shows + total_porn,
             "databases_online": len(db_stats)
         }
     except Exception:

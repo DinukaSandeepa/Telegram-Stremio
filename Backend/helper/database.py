@@ -269,10 +269,11 @@ class Database:
 
     #----- (movie_count, tv_count) totals summed across per-DB stats
     @staticmethod
-    def content_totals(db_stats: List[dict]) -> Tuple[int, int]:
+    def content_totals(db_stats: List[dict]) -> Tuple[int, int, int]:
         total_movies = sum(stat.get("movie_count", 0) for stat in db_stats)
         total_tv = sum(stat.get("tv_count", 0) for stat in db_stats)
-        return total_movies, total_tv
+        total_porn = sum(stat.get("porn_count", 0) for stat in db_stats)
+        return total_movies, total_tv, total_porn
 
     async def update_user_interaction(self, user_id: int, first_name: str, username: str):
         await self.dbs["tracking"]["users"].update_one(
@@ -2209,11 +2210,13 @@ class Database:
                 db = self.dbs[key]
                 movie_count = await db["movie"].count_documents({})
                 tv_count = await db["tv"].count_documents({})
+                porn_count = await db["porn"].count_documents({})
                 db_stats = await db.command("dbstats")
                 stats.append({
                     "db_name": key,
                     "movie_count": movie_count,
                     "tv_count": tv_count,
+                    "porn_count": porn_count,
                     "storageSize": db_stats.get("storageSize", 0),
                     "dataSize": db_stats.get("dataSize", 0)
                 })

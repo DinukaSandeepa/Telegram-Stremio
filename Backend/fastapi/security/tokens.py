@@ -37,6 +37,7 @@ async def verify_token(token: str):
     token_data["limit_exceeded"] = None
     token_data["limit_video"] = None
     token_data["subscription_expired"] = False
+    token_data["is_porn"] = bool(token_data.get("is_porn", False))
 
     #----- Owner-linked tokens are admins (honour persisted flag, else derive)
     _uid = token_data.get("user_id")

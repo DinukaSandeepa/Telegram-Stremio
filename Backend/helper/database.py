@@ -2223,7 +2223,7 @@ class Database:
     #----- API Token Methods
     #-----
 
-    async def add_api_token(self, name: str, daily_limit_gb: float = None, monthly_limit_gb: float = None, user_id: int = None, subscription_exempt: bool = False) -> dict:
+    async def add_api_token(self, name: str, daily_limit_gb: float = None, monthly_limit_gb: float = None, user_id: int = None, subscription_exempt: bool = False, is_porn: bool = False) -> dict:
         #----- If a user_id is provided, return existing token if already created
         if user_id:
             existing = await self.dbs["tracking"]["api_tokens"].find_one({"user_id": user_id})
@@ -2239,6 +2239,7 @@ class Database:
             "user_id": user_id,
             "is_admin": self._is_owner(user_id),
             "subscription_exempt": bool(subscription_exempt),
+            "is_porn": bool(is_porn),
             "expires_at": None,
             "created_at": datetime.utcnow(),
             "limits": {

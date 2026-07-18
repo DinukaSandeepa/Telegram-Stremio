@@ -52,6 +52,7 @@ pinned: false
   * [🔍 Global Search](#-global-search)
   * [📢 Announcement Channel](#-announcement-channel)
   * [🚑 Skip Channel](#-skip-channel)
+  * [🔞 Adult Content & Porn Channels](#-adult-content--porn-channels)
 * [🏷️ Fixing Wrong Metadata](#️-fixing-wrong-metadata)
 * [🛠️ Managing Your Server (logs, restart, update)](#️-managing-your-server-logs-restart-update)
 * [💳 Subscriptions & Access](#-subscriptions--access)
@@ -417,6 +418,20 @@ Sometimes a forwarded file can't be indexed — the caption has **no title** or 
 3. Fix the caption and forward it to your main channel again, or add it manually — your choice.
 
 > 🗑️ **Optional:** the **Delete original on metadata fail** toggle (it appears once a Skip Channel is set) removes the file from the main channel after it's copied into the Skip Channel.
+
+## 🔞 Adult Content & Porn Channels
+
+You can index adult content / porn videos completely independently from the rest of your movies and series. They are saved in a separate database collection (`porn`), matched using ThePornDB API, and accessed only via a dedicated access token.
+
+**How to use:**
+1. Get a Bearer API token from [ThePornDB API Keys page](https://theporndb.net/user/api-tokens).
+2. Go to **Settings** -> **Adult Content Configuration**:
+   - Save your **ThePornDB API Key**.
+   - Set a dedicated **Porn Access Token** (any secure secret string).
+   - Add your **Porn Channels** (channel IDs designated for adult content only).
+3. Forward adult files to the designated porn channels. The server automatically uses ThePornDB API to find scene details, cast performers, studio name, description, and tags (used as genres).
+4. Go to **Tokens & Access** (/admin/access) and click **Create Token**. Check the **🔞 Adult Content Only** box.
+5. Copy the generated Stremio Addon Install Link and install it in Stremio. This addon manifest only serves the **Porn Videos** catalog and streams from the `porn` collection, totally isolating adult content from regular users.
 
 ---
 

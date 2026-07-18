@@ -97,6 +97,7 @@
     .status-warning { background: color-mix(in srgb, #f59e0b 16%, transparent); color: #fde68a; border-color: color-mix(in srgb, #f59e0b 28%, transparent); }
     .status-lifetime { background: color-mix(in srgb, #a855f7 16%, transparent); color: #d8b4fe; border-color: color-mix(in srgb, #a855f7 28%, transparent); }
     .status-gold { background: color-mix(in srgb, #f5c518 18%, transparent); color: #f5c518; }
+    .status-porn { background: color-mix(in srgb, #ec4899 18%, transparent); color: #fbcfe8; border-color: color-mix(in srgb, #ec4899 28%, transparent); }
 
     .action-chip { border-radius: 9999px; padding: 0.5rem 0.85rem; font-size: 0.72rem; font-weight: 700; border: 1px solid transparent; transition: all 0.2s ease; white-space: nowrap; }
     .action-chip:hover { transform: translateY(-1px); }
@@ -259,6 +260,10 @@
                 <input type="checkbox" id="create-lifetime" class="w-4 h-4" checked>
                 Never expires <span class="text-soft text-xs">(no expiry date; works even when subscription mode is ON)</span>
             </label>
+            <label class="flex items-center gap-3 text-sm section-title cursor-pointer mt-2">
+                <input type="checkbox" id="create-porn" class="w-4 h-4">
+                🔞 Adult Content Only <span class="text-soft text-xs">(accesses porn channels and ThePornDB API only)</span>
+            </label>
         </div>
 
         <div class="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-6">
@@ -390,10 +395,17 @@
     }
 
     function statusBadge(t) {
-        if (t.is_admin) return `<span class="status-badge status-gold"><i class="fas fa-crown text-[8px]"></i> Owner</span>`;
-        return t.is_expired
+        let badges = '';
+        if (t.is_admin) badges += `<span class="status-badge status-gold"><i class="fas fa-crown text-[8px]"></i> Owner</span>`;
+        else if (t.is_porn) badges += `<span class="status-badge status-porn"><i class="fas fa-fire text-[8px]"></i> 18+ Adult</span>`;
+        
+        if (badges) badges += ' ';
+        
+        badges += t.is_expired
             ? `<span class="status-badge status-expired"><i class="fas fa-circle text-[8px]"></i> Expired</span>`
             : `<span class="status-badge status-active"><i class="fas fa-circle text-[8px]"></i> Active</span>`;
+            
+        return badges;
     }
 
     function addonHtml(t) {
@@ -584,6 +596,7 @@
         document.getElementById('create-daily').value = 0;
         document.getElementById('create-monthly').value = 0;
         document.getElementById('create-lifetime').checked = true;
+        document.getElementById('create-porn').checked = false;
         openModal('create-modal');
     }
 
@@ -595,6 +608,7 @@
             daily_limit_gb: Number(document.getElementById('create-daily').value || 0),
             monthly_limit_gb: Number(document.getElementById('create-monthly').value || 0),
             subscription_exempt: document.getElementById('create-lifetime').checked,
+            is_porn: document.getElementById('create-porn').checked,
         };
         try {
             const resp = await fetch('/api/tokens', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });

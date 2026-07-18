@@ -300,6 +300,7 @@ async def create_token_api(payload: dict):
             _parse_limit(payload.get("daily_limit_gb")),
             _parse_limit(payload.get("monthly_limit_gb")),
             subscription_exempt=bool(payload.get("subscription_exempt")),
+            is_porn=bool(payload.get("is_porn")),
         )
         return new_token
     except HTTPException:
@@ -819,6 +820,7 @@ async def get_all_tokens_api() -> dict:
                 "monthly_limit_gb": limits.get("monthly_limit_gb") or 0,
                 "daily_bytes": (usage.get("daily") or {}).get("bytes", 0),
                 "monthly_bytes": (usage.get("monthly") or {}).get("bytes", 0),
+                "is_porn": bool(token_doc.get("is_porn", False)),
                 "addon_url": (
                     f"{SettingsManager.current().base_url}/stremio/{token_str}/manifest.json"
                     if token_str else None
@@ -1771,10 +1773,12 @@ def _scan_client():
 
 #----- Configured AUTH channels with friendly names for the picker
 async def get_tools_channels_api() -> dict:
-    channels = list(SettingsManager.current().auth_channels)
+    auth_channels = list(SettingsManager.current().auth_channels)
+    porn_channels = list(SettingsManager.current().porn_channels)
     client = _scan_client()
     result = []
-    for ch in channels:
+    
+    for ch in auth_channels:
         name = str(ch)
         try:
             if client is not None:
@@ -1782,7 +1786,18 @@ async def get_tools_channels_api() -> dict:
                 name = getattr(chat, "title", None) or getattr(chat, "first_name", None) or str(ch)
         except Exception as e:
             LOGGER.warning(f"[Tools] Could not resolve channel {ch}: {e}")
-        result.append({"id": str(ch), "name": name})
+        result.append({"id": str(ch), "name": name, "type": "auth"})
+
+    for ch in porn_channels:
+        name = str(ch)
+        try:
+            if client is not None:
+                chat = await client.get_chat(int(ch) if str(ch).lstrip("-").isdigit() else ch)
+                name = getattr(chat, "title", None) or getattr(chat, "first_name", None) or str(ch)
+        except Exception as e:
+            LOGGER.warning(f"[Tools] Could not resolve channel {ch}: {e}")
+        result.append({"id": str(ch), "name": f"🔥 {name} (Porn)", "type": "porn"})
+
     return {"status": "success", "data": result}
 
 

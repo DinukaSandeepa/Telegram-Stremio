@@ -112,17 +112,34 @@ async def list_media_api(
     page: int = Query(1, ge=1),
     page_size: int = Query(24, ge=1, le=100),
     search: str = Query("", max_length=100),
-    custom: bool = Query(False)
+    custom: bool = Query(False),
+    missing_covers: bool = Query(False)
 ):
     try:
         key = "movies" if media_type == "movie" else ("porn" if media_type == "porn" else "tv_shows")
         #----- Custom (manually added) titles carry a negative synthetic tmdb_id
-        extra_filter = {"tmdb_id": {"$lt": 0}} if custom else None
+        extra_filter = {}
+        if custom:
+            extra_filter["tmdb_id"] = {"$lt": 0}
+
+        if missing_covers:
+            extra_filter["$or"] = [
+                {"poster": None},
+                {"poster": ""},
+                {"poster": {"$exists": False}},
+                {"backdrop": None},
+                {"backdrop": ""},
+                {"backdrop": {"$exists": False}}
+            ]
+
+        if not extra_filter:
+            extra_filter = None
+
         if search:
             if media_type == "porn":
-                result = await db.search_porn_documents(search, page, page_size)
+                result = await db.search_porn_documents(search, page, page_size, extra_filter=extra_filter)
             else:
-                result = await db.search_documents(search, page, page_size)
+                result = await db.search_documents(search, page, page_size, extra_filter=extra_filter)
             filtered_results = [
                 item for item in result['results']
                 if item.get('media_type') == media_type and (not custom or int(item.get('tmdb_id') or 0) < 0)

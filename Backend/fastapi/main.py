@@ -211,9 +211,10 @@ async def list_media(
     page_size: int = Query(24, ge=1, le=100),
     search: str = Query("", max_length=100),
     custom: bool = Query(False),
+    missing_covers: bool = Query(False),
     _: bool = Depends(require_auth)
 ):
-    return await list_media_api(media_type, page, page_size, search, custom)
+    return await list_media_api(media_type, page, page_size, search, custom, missing_covers)
 
 @app.delete("/api/media/delete")
 async def delete_media(tmdb_id: int, db_index: int, media_type: str, _: bool = Depends(require_auth)):

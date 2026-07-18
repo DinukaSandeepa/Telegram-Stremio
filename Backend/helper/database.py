@@ -1793,11 +1793,13 @@ class Database:
                 "results": [convert_objectid_to_str(doc) for doc in paged_results]
             }
 
-    async def search_porn_documents(self, query: str, page: int, page_size: int) -> dict:
+    async def search_porn_documents(self, query: str, page: int, page_size: int, extra_filter: Optional[dict] = None) -> dict:
         skip = (page - 1) * page_size
         words = query.split()
         regex_query = {'$regex': '.*' + '.*'.join(words) + '.*', '$options': 'i'}
         match_filter = {"$or": [{"title": regex_query}, {"telegram.name": regex_query}]}
+        if extra_filter:
+            match_filter = {"$and": [match_filter, extra_filter]}
         pipeline = [
             {"$match": match_filter},
             {"$project": {

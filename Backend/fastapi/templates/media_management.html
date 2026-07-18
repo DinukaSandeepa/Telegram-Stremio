@@ -97,7 +97,11 @@
                 </div>
             </div>
 
-            <div class="flex flex-col sm:flex-row gap-3 lg:pt-7">
+            <div class="flex flex-col sm:flex-row gap-3 lg:pt-7 items-stretch sm:items-center">
+                <label class="inline-flex items-center gap-2 cursor-pointer select-none glass-panel border border-hairline px-4 py-3 rounded-2xl text-text hover:bg-surface-2 transition duration-300">
+                    <input type="checkbox" id="missing-covers-checkbox" class="w-4 h-4 rounded accent-primary bg-background border-border text-primary focus:ring-primary/60" onchange="toggleMissingCovers(this.checked)">
+                    <span class="text-sm font-semibold text-text">⚠️ Missing Images</span>
+                </label>
                 <button onclick="searchMedia()"
                         class="inline-flex justify-center items-center gap-2 bg-primary hover:bg-primary/90 text-white px-5 py-3 rounded-2xl transition font-bold shadow-lg shadow-primary/20">
                     <i class="fa-solid fa-magnifying-glass"></i>
@@ -190,6 +194,7 @@
     let currentPage = 1;
     let currentSearch = '';
     let isLoading = false;
+    let missingCovers = false;
     const mediaType = '{{ media_type }}';
     const isCustom = {{ 'true' if custom else 'false' }};
 
@@ -223,6 +228,7 @@
         const params = new URLSearchParams();
         params.set('media_type', mediaType);
         if (isCustom) params.set('custom', '1');
+        if (missingCovers) params.set('missing_covers', '1');
         if (page > 1) params.set('page', page);
         if (search) params.set('search', search);
         history.replaceState(null, '', `${location.pathname}?${params.toString()}`);
@@ -237,7 +243,7 @@
         syncPageUrl(page, search);
 
         try {
-            const url = `/api/media/list?media_type=${mediaType}&page=${page}&page_size=24&search=${encodeURIComponent(search)}&custom=${isCustom ? 1 : 0}`;
+            const url = `/api/media/list?media_type=${mediaType}&page=${page}&page_size=24&search=${encodeURIComponent(search)}&custom=${isCustom ? 1 : 0}&missing_covers=${missingCovers ? 1 : 0}`;
             const response = await fetch(url, {
                 method: 'GET',
                 credentials: 'same-origin',
@@ -441,7 +447,15 @@
 
     function clearSearch() {
         document.getElementById('search-input').value = '';
+        const checkbox = document.getElementById('missing-covers-checkbox');
+        if (checkbox) checkbox.checked = false;
+        missingCovers = false;
         loadMedia(1, '');
+    }
+
+    function toggleMissingCovers(checked) {
+        missingCovers = checked;
+        loadMedia(1, currentSearch);
     }
 
     function retryLoad() {
@@ -482,9 +496,14 @@
         const params = new URLSearchParams(location.search);
         const startPage = Math.max(1, parseInt(params.get('page') || '1', 10) || 1);
         const startSearch = params.get('search') || '';
+        missingCovers = params.get('missing_covers') === '1';
 
         const searchInput = document.getElementById('search-input');
         if (startSearch) searchInput.value = startSearch;
+
+        const checkbox = document.getElementById('missing-covers-checkbox');
+        if (checkbox) checkbox.checked = missingCovers;
+
         loadMedia(startPage, startSearch);
 
         searchInput.addEventListener('keypress', (e) => {

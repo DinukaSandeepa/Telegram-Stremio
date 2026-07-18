@@ -491,8 +491,9 @@ class ScanManager:
         except Exception as e:
             LOGGER.warning(f"[ScanManager] Dup-check error msg {msg_id}: {e}")
 
+        duration = getattr(message.video or message.animation, "duration", None)
         try:
-            metadata_info = await metadata(clean_filename(title), channel_int, msg_id)
+            metadata_info = await metadata(clean_filename(title), channel_int, msg_id, duration=duration)
         except Exception as e:
             LOGGER.warning(f"[ScanManager] Metadata exception for msg {msg_id}: {e}")
             metadata_info = None

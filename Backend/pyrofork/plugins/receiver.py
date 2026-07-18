@@ -274,8 +274,8 @@ async def file_receive_handler(client: Client, message: Message):
             return
 
         _, title, msg_id, raw_size, size, channel = _extract_fields(message)
-
-        metadata_info = await metadata(clean_filename(title), int(channel), msg_id, override_id=override_id, season_hint=season_hint)
+        duration = getattr(message.video or message.animation, "duration", None)
+        metadata_info = await metadata(clean_filename(title), int(channel), msg_id, override_id=override_id, season_hint=season_hint, duration=duration)
         if metadata_info is None:
             LOGGER.warning(f"Metadata failed for file: {title} (ID: {msg_id})")
             reason = analyze_metadata_failure(clean_filename(title))
@@ -328,7 +328,8 @@ async def file_edited_handler(client: Client, message: Message):
         LOGGER.info(f"Detected override ID '{override_id}' in edited message {msg_id}")
         await db.remove_media_part(int(channel), msg_id)
 
-        metadata_info = await metadata(clean_filename(title), int(channel), msg_id, override_id=override_id)
+        duration = getattr(message.video or message.animation, "duration", None)
+        metadata_info = await metadata(clean_filename(title), int(channel), msg_id, override_id=override_id, duration=duration)
         if metadata_info is None:
             LOGGER.warning(f"Metadata failed for edited file: {title} (ID: {msg_id})")
             return

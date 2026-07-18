@@ -468,6 +468,22 @@ class ScanManager:
         size = get_readable_file_size(file.file_size)
         channel_int = int(str(chat_id).replace("-100", ""))
 
+        # Check if the channel is a porn channel and if the caption has a TMDB link
+        from Backend.helper.metadata import _is_porn_channel
+        if _is_porn_channel(channel_int) and message.caption:
+            import re
+            tmdb_pattern = r'\n?https?://(?:www\.)?themoviedb\.org/(?:movie|tv)/\d+/?'
+            if re.search(tmdb_pattern, message.caption):
+                clean_caption = re.sub(tmdb_pattern, '', message.caption).strip()
+                LOGGER.info(f"[ScanManager] Cleaning incorrect TMDB link from porn channel msg {msg_id}")
+                try:
+                    from Backend.helper.task_manager import edit_message
+                    await edit_message(chat_id, msg_id, clean_caption)
+                    message.caption = clean_caption
+                    title = clean_caption
+                except Exception as e:
+                    LOGGER.warning(f"[ScanManager] Failed to edit caption for msg {msg_id}: {e}")
+
         try:
             if await self._stream_id_exists(channel_int, msg_id):
                 s["counters"]["skipped_dup"] += 1

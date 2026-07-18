@@ -648,22 +648,42 @@ def _is_porn_channel(channel) -> bool:
 
 
 def clean_porn_title(title: str) -> str:
-    # 1. Replace dots, underscores, dashes, and path delimiters with space
-    title_clean = re.sub(r'[._\-]', ' ', title)
-    # 2. Match and remove dates (YY MM DD or YYYY MM DD, optional delimiters)
-    title_clean = re.sub(r'\b(20)?\d{2}\s+\d{2}\s+\d{2}\b', ' ', title_clean)
-    # 3. Match and remove common noise words (case-insensitive)
-    noise_patterns = [
-        r'\bxxx\b', r'\bhardcore\b', r'\bpov\b', r'\bhevc\b', r'\bx26[45]\b',
-        r'\b1080p\b', r'\b720p\b', r'\b4k\b', r'\b2160p\b', r'\bhd\b',
-        r'\bdvdrip\b', r'\bhdrip\b', r'\bweb-dl\b', r'\bglam porn\b',
-        r'\bfrench\b', r'\bdutch\b', r'\bgerman\b', r'\bspanish\b', r'\bjapanese\b', r'\brussian\b'
+    # 1. Lowercase for uniform matching
+    t = title.lower()
+    # Replace dots, underscores, dashes with space
+    t = re.sub(r'[._\-]', ' ', t)
+    
+    # 2. Find index of first quality/codec indicator to truncate from
+    indicators = [
+        r'\b720p\b', r'\b1080p\b', r'\b2160p\b', r'\b4k\b',
+        r'\bweb\b', r'\bdvdrip\b', r'\bhdrip\b', r'\bwebrip\b', r'\brip\b',
+        r'\bx264\b', r'\bx265\b', r'\bhevc\b', r'\bh264\b', r'\bh265\b',
+        r'\bglam\s+porn\b', r'\bgalaxxxy\b'
     ]
-    for pattern in noise_patterns:
-        title_clean = re.sub(pattern, ' ', title_clean, flags=re.IGNORECASE)
-    # 4. Collapse spaces and strip
-    title_clean = re.sub(r'\s+', ' ', title_clean).strip()
-    return title_clean
+    
+    min_idx = len(t)
+    for ind in indicators:
+        match = re.search(ind, t)
+        if match:
+            min_idx = min(min_idx, match.start())
+            
+    # Truncate technical detail suffixes
+    t = t[:min_idx]
+    
+    # 3. Match and remove dates (YY MM DD or YYYY MM DD)
+    t = re.sub(r'\b(20)?\d{2}\s+\d{2}\s+\d{2}\b', ' ', t)
+    
+    # 4. Remove other noise words
+    noise_words = [
+        r'\bxxx\b', r'\bhardcore\b', r'\bpov\b', r'\bfrench\b', r'\bdutch\b',
+        r'\bgerman\b', r'\bspanish\b', r'\bjapanese\b', r'\brussian\b'
+    ]
+    for nw in noise_words:
+        t = re.sub(nw, ' ', t)
+        
+    # 5. Collapse spaces and strip
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t
 
 
 async def fetch_porn_metadata(title: str, encoded_string: str, year: int | None, quality: str) -> dict | None:
@@ -956,6 +976,11 @@ async def metadata(filename: str, channel: int, msg_id, override_id: str = None,
     season = parsed.get("season")
     episode = parsed.get("episode")
     year = parsed.get("year")
+    #----- Detect date in filename (very common in adult content: YY.MM.DD or YYYY.MM.DD)
+    date_match = re.search(r'\b(20)?(\d{2})[.\s_-](\d{2})[.\s_-](\d{2})\b', filename)
+    if date_match and not year:
+        yy = int(date_match.group(2))
+        year = 2000 + yy if yy < 50 else 1900 + yy
     quality = parsed.get("quality")
 
     #----- Absolute-numbered files (e.g. anime "One Piece - 1142") carry an episode
@@ -1224,6 +1249,8 @@ async def search_any_candidates(query: str, year: int | None = None, limit: int 
 
 
 def build_id_link(imdb_id=None, tmdb_id=None, media_type: str = "movie") -> str | None:
+    if media_type == "porn" or (imdb_id and str(imdb_id).startswith("tpdb:")):
+        return None
     if imdb_id and str(imdb_id).startswith("tt"):
         return f"https://www.imdb.com/title/{imdb_id}/"
     if tmdb_id is not None and str(tmdb_id).lstrip("-").isdigit() and int(tmdb_id) > 0:

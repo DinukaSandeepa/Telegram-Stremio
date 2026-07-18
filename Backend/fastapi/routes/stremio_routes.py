@@ -152,6 +152,30 @@ def convert_to_stremio_meta(item: dict) -> dict:
         "cast": item.get("cast") or [],
         "runtime": item.get("runtime") or "",
     }
+
+    links = []
+    for actor in (item.get("cast") or []):
+        links.append({
+            "name": actor,
+            "category": "Cast",
+            "url": f"stremio:///search?search={quote(actor)}"
+        })
+    if item.get("studio"):
+        studio = item.get("studio")
+        links.append({
+            "name": studio,
+            "category": "Studio",
+            "url": f"stremio:///search?search={quote(studio)}"
+        })
+    for genre in (item.get("genres") or []):
+        links.append({
+            "name": genre,
+            "category": "Genres",
+            "url": f"stremio:///search?search={quote(genre)}"
+        })
+    if links:
+        meta["links"] = links
+
     return meta
 
 
@@ -514,6 +538,29 @@ async def get_meta(token: str, media_type: str, id: str, token_data: dict = Depe
         "cast": media.get("cast") or [],
         "runtime": media.get("runtime") or "",
     }
+
+    links = []
+    for actor in (media.get("cast") or []):
+        links.append({
+            "name": actor,
+            "category": "Cast",
+            "url": f"stremio:///search?search={quote(actor)}"
+        })
+    if media.get("studio"):
+        studio = media.get("studio")
+        links.append({
+            "name": studio,
+            "category": "Studio",
+            "url": f"stremio:///search?search={quote(studio)}"
+        })
+    for genre in (media.get("genres") or []):
+        links.append({
+            "name": genre,
+            "category": "Genres",
+            "url": f"stremio:///search?search={quote(genre)}"
+        })
+    if links:
+        meta_obj["links"] = links
 
     if media.get("media_type") == "movie":
         released_date = format_released_date(media)

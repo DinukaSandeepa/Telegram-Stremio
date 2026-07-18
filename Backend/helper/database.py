@@ -1798,7 +1798,7 @@ class Database:
         skip = (page - 1) * page_size
         words = query.split()
         regex_query = {'$regex': '.*' + '.*'.join(words) + '.*', '$options': 'i'}
-        match_filter = {"$or": [{"title": regex_query}, {"telegram.name": regex_query}]}
+        match_filter = {"$or": [{"title": regex_query}, {"telegram.name": regex_query}, {"cast": regex_query}]}
         if extra_filter:
             match_filter = {"$and": [match_filter, extra_filter]}
         pipeline = [
@@ -1806,7 +1806,7 @@ class Database:
             {"$project": {
                 "_id": 1, "tmdb_id": 1, "tpdb_id": 1, "title": 1, "genres": 1, "rating": 1,
                 "release_year": 1, "poster": 1, "backdrop": 1, "description": 1,
-                "media_type": 1, "db_index": 1, "imdb_id": 1, "studio": 1
+                "media_type": 1, "db_index": 1, "imdb_id": 1, "studio": 1, "cast": 1
             }}
         ]
         results = []

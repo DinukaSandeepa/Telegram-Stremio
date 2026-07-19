@@ -2428,9 +2428,10 @@ class Database:
         #----- Flag a specific telegram quality entry as is_dead=True
         db_key = f"storage_{db_index}"
         
-        if media_type == "movie":
-            #----- Direct update in the telegram array for movies
-            result = await self.dbs[db_key]["movie"].update_one(
+        if media_type in ("movie", "porn"):
+            #----- Direct update in the telegram array for movies or porn
+            collection = self._collection_for(media_type)
+            result = await self.dbs[db_key][collection].update_one(
                 {"tmdb_id": tmdb_id, "telegram.id": quality_id},
                 {"$set": {"telegram.$.is_dead": True, "updated_on": datetime.utcnow()}}
             )
@@ -2482,6 +2483,25 @@ class Database:
                             "title": movie.get("title"),
                             "year": movie.get("year"),
                             "poster": movie.get("poster"),
+                            "quality_id": quality.get("id"),
+                            "quality": quality.get("quality"),
+                            "size": quality.get("size"),
+                            "date_added": quality.get("date_added")
+                        })
+
+            #----- Scan Porn ---
+            #----- Match any porn where at least one telegram entry has is_dead=True
+            porn_cursor = db["porn"].find({"telegram.is_dead": True})
+            async for porn in porn_cursor:
+                for quality in porn.get("telegram", []):
+                    if quality.get("is_dead"):
+                        dead_links.append({
+                            "type": "porn",
+                            "tmdb_id": porn.get("tmdb_id"),
+                            "db_index": porn.get("db_index", i),
+                            "title": porn.get("title"),
+                            "year": porn.get("year") or porn.get("release_year"),
+                            "poster": porn.get("poster"),
                             "quality_id": quality.get("id"),
                             "quality": quality.get("quality"),
                             "size": quality.get("size"),
@@ -2716,7 +2736,7 @@ class Database:
         new_tmdb_id = int(metadata.get("tmdb_id") or tmdb_id)
         new_imdb_id = _pick("imdb_id")
 
-        if collection_name == "movie":
+        if collection_name in ("movie", "porn"):
             current_doc.update({
                 "tmdb_id": new_tmdb_id,
                 "imdb_id": new_imdb_id,
@@ -2730,7 +2750,7 @@ class Database:
                 "genres": _pick("genres"),
                 "cast": _pick("cast"),
                 "runtime": _pick("runtime"),
-                "media_type": "movie",
+                "media_type": collection_name,
                 "telegram": current_doc.get("telegram", []),
                 "updated_on": datetime.utcnow(),
             })
@@ -2763,7 +2783,7 @@ class Database:
         })
 
         if existing_other:
-            if collection_name == "movie":
+            if collection_name in ("movie", "porn"):
                 existing_other["telegram"] = self._merge_telegram_lists(
                     existing_other.get("telegram", []), current_doc.get("telegram", [])
                 )

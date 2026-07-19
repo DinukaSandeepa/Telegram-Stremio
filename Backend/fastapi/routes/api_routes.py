@@ -212,7 +212,7 @@ async def update_media_api(
                 update_data['languages'] = [l.strip() for l in update_data['languages'].split(',') if l.strip()]
             elif not isinstance(update_data['languages'], list):
                 update_data['languages'] = []
-        if media_type == "movie":
+        if media_type in ("movie", "porn"):
             if 'runtime' in update_data and update_data['runtime']:
                 try:
                     update_data['runtime'] = int(update_data['runtime'])

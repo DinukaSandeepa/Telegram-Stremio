@@ -162,7 +162,8 @@ def build_results_markup(results, page: int, short_id: str) -> InlineKeyboardMar
     for item in filtered:
         media_type = "movie" if item.media_type == "movie" else "tv"
         title = getattr(item, "title" if media_type == "movie" else "name", "Unknown Title")
-        year = getattr(item, "year", None) or "N/A"
+        date_val = getattr(item, "release_date" if media_type == "movie" else "first_air_date", None)
+        year = date_val.year if date_val and hasattr(date_val, "year") else "N/A"
         emoji = "🎬" if media_type == "movie" else "📺"
         button_text = f"{emoji} {title} ({year})"
         callback_data = f"imdb_det:{media_type}:{item.id}"

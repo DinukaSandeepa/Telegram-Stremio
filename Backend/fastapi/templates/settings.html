@@ -622,6 +622,19 @@
         </label>
     </div>
 
+    <!-- ── IMDB Post Channel ───────────────────────────────────────────── -->
+    <div class="settings-card">
+        <h2><i class="fa-solid fa-square-rss"></i> IMDB Post Channel</h2>
+        <label class="s-label" for="imdb_post_channel">IMDB POST CHANNEL
+            <span style="font-weight:400;text-transform:none;letter-spacing:0">
+                — the target channel where formatted IMDB posts will be sent when selecting titles via the /imdb bot command. Channel ID (e.g. <code>-1001234567890</code>) or <code>@username</code>. The bot must be an <strong>admin</strong> here.
+            </span>
+        </label>
+        <input type="text" id="imdb_post_channel" class="s-input"
+            value="{{ settings.imdb_post_channel }}"
+            placeholder="-100xxxxxxxxxx or @channel">
+    </div>
+
     <!-- ── Proxy ───────────────────────────────────────────────────────── -->
     <div class="settings-card">
         <h2><i class="fa-solid fa-network-wired"></i> Proxy Settings</h2>
@@ -1038,6 +1051,7 @@ async function saveSettings() {
         announce_new_content:          document.getElementById('announce_new_content').checked,
         announcement_channel:          document.getElementById('announcement_channel').value.trim(),
         skip_channel:                  document.getElementById('skip_channel').value.trim(),
+        imdb_post_channel:             document.getElementById('imdb_post_channel').value.trim(),
         delete_on_metadata_fail:       document.getElementById('delete_on_metadata_fail').checked,
     };
 
@@ -1160,6 +1174,7 @@ function renderSettings(s) {
     document.getElementById('http_proxy_url').value = s.http_proxy_url || '';
     document.getElementById('announcement_channel').value = s.announcement_channel || '';
     document.getElementById('skip_channel').value = s.skip_channel || '';
+    document.getElementById('imdb_post_channel').value = s.imdb_post_channel || '';
     toggleSkipDeleteField();
 
     // Auth channels (with per-channel anime checkbox) + other multi-value lists

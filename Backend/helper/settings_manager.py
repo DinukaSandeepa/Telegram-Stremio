@@ -36,6 +36,7 @@ _DEFAULTS: Dict[str, Any] = {
     "announce_new_content": False,
     "announcement_channel": "",
     "skip_channel": "",
+    "imdb_post_channel": "",
     "delete_on_metadata_fail": False,
     "porn_channels": [],
     "theporndb_api_key": "",
@@ -142,6 +143,10 @@ class Settings:
     @property
     def skip_channel(self) -> str:
         return str(self._d.get("skip_channel") or "").strip()
+
+    @property
+    def imdb_post_channel(self) -> str:
+        return str(self._d.get("imdb_post_channel") or "").strip()
 
     #----- Strings
     @property

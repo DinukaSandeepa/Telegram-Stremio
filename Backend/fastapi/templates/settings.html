@@ -622,17 +622,19 @@
         </label>
     </div>
 
-    <!-- ── IMDB Post Channel ───────────────────────────────────────────── -->
+    <!-- ── IMDb Command Access ─────────────────────────────────────────── -->
     <div class="settings-card">
-        <h2><i class="fa-solid fa-square-rss"></i> IMDB Post Channel</h2>
-        <label class="s-label" for="imdb_post_channel">IMDB POST CHANNEL
+        <h2><i class="fa-solid fa-users-cog"></i> IMDb Command Access</h2>
+        <label class="s-label">AUTHORIZED USER IDS
             <span style="font-weight:400;text-transform:none;letter-spacing:0">
-                — the target channel where formatted IMDB posts will be sent when selecting titles via the /imdb bot command. Channel ID (e.g. <code>-1001234567890</code>) or <code>@username</code>. The bot must be an <strong>admin</strong> here.
+                — list of Telegram user IDs that are authorized to use the <code>/imdb</code> command. The owner (OWNER_ID) has access by default.
             </span>
         </label>
-        <input type="text" id="imdb_post_channel" class="s-input"
-            value="{{ settings.imdb_post_channel }}"
-            placeholder="-100xxxxxxxxxx or @channel">
+        <div id="imdb_authorized_users_items" class="list-container"></div>
+        <button type="button" class="btn btn-secondary btn-sm" style="margin-top:0.5rem"
+            onclick="addSimpleListItem('imdb_authorized_users_items', 'number', '')">
+            <i class="fa-solid fa-plus"></i> Add User ID
+        </button>
     </div>
 
     <!-- ── Proxy ───────────────────────────────────────────────────────── -->
@@ -1051,7 +1053,7 @@ async function saveSettings() {
         announce_new_content:          document.getElementById('announce_new_content').checked,
         announcement_channel:          document.getElementById('announcement_channel').value.trim(),
         skip_channel:                  document.getElementById('skip_channel').value.trim(),
-        imdb_post_channel:             document.getElementById('imdb_post_channel').value.trim(),
+        imdb_authorized_users:         collectList('imdb_authorized_users').map(Number),
         delete_on_metadata_fail:       document.getElementById('delete_on_metadata_fail').checked,
     };
 
@@ -1174,12 +1176,12 @@ function renderSettings(s) {
     document.getElementById('http_proxy_url').value = s.http_proxy_url || '';
     document.getElementById('announcement_channel').value = s.announcement_channel || '';
     document.getElementById('skip_channel').value = s.skip_channel || '';
-    document.getElementById('imdb_post_channel').value = s.imdb_post_channel || '';
     toggleSkipDeleteField();
 
     // Auth channels (with per-channel anime checkbox) + other multi-value lists
     rebuildAuthChannels(s.auth_channels, s.anime_channels);
     rebuildSimpleList('approver_ids_items', s.approver_ids, 'number');
+    rebuildSimpleList('imdb_authorized_users_items', s.imdb_authorized_users, 'number');
     rebuildSimpleList('multi_tokens_items', s.multi_tokens, 'text');
     rebuildSimpleList('global_search_channels_items', s.global_search_channels, 'text');
     rebuildSimpleList('manual_channels_items', s.manual_channels, 'text');

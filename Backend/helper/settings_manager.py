@@ -36,7 +36,7 @@ _DEFAULTS: Dict[str, Any] = {
     "announce_new_content": False,
     "announcement_channel": "",
     "skip_channel": "",
-    "imdb_post_channel": "",
+    "imdb_authorized_users": [],
     "delete_on_metadata_fail": False,
     "porn_channels": [],
     "theporndb_api_key": "",
@@ -144,10 +144,6 @@ class Settings:
     def skip_channel(self) -> str:
         return str(self._d.get("skip_channel") or "").strip()
 
-    @property
-    def imdb_post_channel(self) -> str:
-        return str(self._d.get("imdb_post_channel") or "").strip()
-
     #----- Strings
     @property
     def tmdb_api(self) -> str:
@@ -202,6 +198,10 @@ class Settings:
     @property
     def approver_ids(self) -> List[int]:
         return [int(x) for x in (self._d.get("approver_ids") or [])]
+
+    @property
+    def imdb_authorized_users(self) -> List[int]:
+        return [int(x) for x in (self._d.get("imdb_authorized_users") or [])]
 
     @property
     def multi_tokens(self) -> List[str]:

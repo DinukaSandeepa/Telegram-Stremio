@@ -1663,6 +1663,14 @@ async def update_settings_api(payload: dict) -> dict:
         except (ValueError, TypeError):
             raise HTTPException(status_code=400, detail="All approver_ids must be integers.")
 
+    if "imdb_authorized_users" in payload:
+        if not isinstance(payload["imdb_authorized_users"], list):
+            raise HTTPException(status_code=400, detail="'imdb_authorized_users' must be a list.")
+        try:
+            payload["imdb_authorized_users"] = [int(v) for v in payload["imdb_authorized_users"] if str(v).strip()]
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="All imdb_authorized_users must be integers.")
+
     if "subscription_group_id" in payload:
         try:
             payload["subscription_group_id"] = int(payload["subscription_group_id"])
@@ -1732,7 +1740,7 @@ async def update_settings_api(payload: dict) -> dict:
     #----- Only AUTH ∩ ANIME is allowed, because an anime channel is an auth channel
     #----- that's flagged as anime (the receiver only indexes files from auth channels).
     _channel_fields = ("auth_channels", "manual_channels", "global_search_channels",
-                       "anime_channels", "announcement_channel", "skip_channel", "porn_channels", "imdb_post_channel")
+                       "anime_channels", "announcement_channel", "skip_channel", "porn_channels")
     if any(field in payload for field in _channel_fields):
         current = SettingsManager.current()
 
@@ -1749,7 +1757,6 @@ async def update_settings_api(payload: dict) -> dict:
             "ANNOUNCEMENT": _norm_ids(payload.get("announcement_channel", current.announcement_channel)),
             "SKIP": _norm_ids(payload.get("skip_channel", current.skip_channel)),
             "PORN": _norm_ids(payload.get("porn_channels", list(current.porn_channels))),
-            "IMDB POST": _norm_ids(payload.get("imdb_post_channel", current.imdb_post_channel)),
         }
 
         allowed_overlap = frozenset({"AUTH", "ANIME"})
@@ -1769,36 +1776,12 @@ async def update_settings_api(payload: dict) -> dict:
     #----- Strip whitespace from string fields
     for key in ("tmdb_api", "base_url", "upstream_repo", "upstream_branch",
                 "admin_username", "admin_password", "session_secret", "http_proxy_url",
-                "payment_instructions", "payment_qr_url", "announcement_channel", "skip_channel", "imdb_post_channel"):
+                "payment_instructions", "payment_qr_url", "announcement_channel", "skip_channel"):
         if key in payload and isinstance(payload[key], str):
             payload[key] = payload[key].strip()
 
     if payload.get("admin_password"):
         payload["admin_password"] = hash_password(payload["admin_password"])
-
-    if "imdb_post_channel" in payload:
-        ch = str(payload["imdb_post_channel"]).strip()
-        if ch:
-            # Enforce validation only if bot is running and connected
-            client = _scan_client()
-            if client is not None and getattr(client, "is_connected", False):
-                try:
-                    chat_id = int(ch) if ch.replace("-100", "").lstrip("-").isdigit() else ch
-                    chat = await client.get_chat(chat_id)
-                    member = await client.get_chat_member(chat.id, "me")
-                    from pyrogram.enums import ChatMemberStatus
-                    if member.status not in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
-                        raise HTTPException(
-                            status_code=400,
-                            detail="The bot must be an administrator in the IMDB post channel."
-                        )
-                except HTTPException:
-                    raise
-                except Exception as e:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Could not validate IMDB Post Channel or the bot is not admin. Error: {e}"
-                    )
 
     try:
         reinit_results = await SettingsManager.update(db, payload)

@@ -12,13 +12,9 @@ from Backend.config import Telegram
 from Backend.helper.settings_manager import SettingsManager
 from Backend.logger import LOGGER
 from Backend.helper.metadata import get_tmdb_client, _tmdb_details, tmdb_api_key
-from Backend.pyrofork.bot import get_streambot_url
 
 #----- In-memory query cache for pagination
 IMDB_QUERY_CACHE = {}
-
-#----- Named configurable template constant for the download deep link
-DOWNLOAD_URL_TEMPLATE = "{bot_url}?start=req_{tmdb_id}"
 
 #----- ISO country code to full name mapping
 ISO_COUNTRY_MAP = {
@@ -90,8 +86,10 @@ GENRE_EMOJI_MAP = {
 def _is_authorized(user_id: int) -> bool:
     if not user_id:
         return False
-    approvers = SettingsManager.current().approver_ids or []
-    return user_id == Telegram.OWNER_ID or user_id in approvers
+    if user_id == Telegram.OWNER_ID:
+        return True
+    auth_users = SettingsManager.current().imdb_authorized_users or []
+    return user_id in auth_users
 
 
 #----- Helper to clean genre names for valid hashtags
@@ -216,7 +214,7 @@ async def imdb_cmd(client: Client, message: Message):
 
         markup = build_results_markup(results, 1, short_id)
         await message.reply_text(
-            f"🔍 **Search results for:** `{query}`\nSelect a title to format and post to the channel:",
+            f"🔍 **Search results for:** `{query}`\nSelect a title to format:",
             reply_markup=markup,
             quote=True
         )
@@ -254,7 +252,7 @@ async def handle_imdb_prompt_reply(client: Client, message: Message):
 
             markup = build_results_markup(results, 1, short_id)
             await message.reply_text(
-                f"🔍 **Search results for:** `{query}`\nSelect a title to format and post to the channel:",
+                f"🔍 **Search results for:** `{query}`\nSelect a title to format:",
                 reply_markup=markup,
                 quote=True
             )
@@ -289,7 +287,7 @@ async def imdb_page_callback(client: Client, callback_query: CallbackQuery):
 
         markup = build_results_markup(results, page, short_id)
         await callback_query.message.edit_text(
-            f"🔍 **Search results for:** `{query}`\nSelect a title to format and post to the channel:",
+            f"🔍 **Search results for:** `{query}`\nSelect a title to format:",
             reply_markup=markup
         )
     except Exception as e:
@@ -303,7 +301,7 @@ async def imdb_noop_callback(client: Client, callback_query: CallbackQuery):
     await callback_query.answer()
 
 
-#----- Callback query: Detail selection & channel posting
+#----- Callback query: Detail selection & in-bot formatting response
 @Client.on_callback_query(filters.regex(r"^imdb_det:(movie|tv):(\d+)$"))
 async def imdb_detail_callback(client: Client, callback_query: CallbackQuery):
     try:
@@ -316,16 +314,7 @@ async def imdb_detail_callback(client: Client, callback_query: CallbackQuery):
 
         await callback_query.answer("Formatting post...")
 
-        # 1. Fetch configured post channel
-        post_channel = SettingsManager.current().imdb_post_channel
-        if not post_channel:
-            return await callback_query.message.reply_text(
-                "⚠️ **Error**: No IMDB Post Channel has been configured. "
-                "Please configure one on the Admin Settings page first.",
-                quote=True
-            )
-
-        # 2. Fetch full details
+        # Fetch full details
         details = await _tmdb_details(media_type, tmdb_id)
         if not details:
             return await callback_query.message.reply_text(
@@ -333,7 +322,7 @@ async def imdb_detail_callback(client: Client, callback_query: CallbackQuery):
                 quote=True
             )
 
-        # 3. Format fields
+        # Format fields
         title = getattr(details, "title" if media_type == "movie" else "name", "Unknown Title") or "Unknown Title"
 
         # Runtime
@@ -391,44 +380,28 @@ async def imdb_detail_callback(client: Client, callback_query: CallbackQuery):
         info_parts.append(f"{release_date} ({origin_country})")
         info_line = " | ".join(info_parts)
 
-        # Render template text
+        # Render template text (ends with simple plain text)
         post_text = (
             f"📺{title}📺\n\n"
             f"📆Info : {info_line}\n"
             f"🎭Genres : {genres_text}\n"
-            f"⭐Rating : {rating_text}\n"
+            f"⭐Rating : {rating_text}\n\n"
+            f"🔥Click Here To Download🔥"
         )
 
-        # 4. Construct deep link download URL
-        bot_url = get_streambot_url()
-        download_url = DOWNLOAD_URL_TEMPLATE.format(bot_url=bot_url, tmdb_id=tmdb_id)
+        # Send the final formatted message back to the bot chat
+        await client.send_message(
+            chat_id=callback_query.message.chat.id,
+            text=post_text,
+            disable_web_page_preview=True
+        )
 
-        markup = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔥Click Here To Download🔥", url=download_url)
-        ]])
-
-        # 5. Resolve target chat ID/username
-        target_chat = int(post_channel) if post_channel.replace("-100", "").lstrip("-").isdigit() else post_channel
-
+        # Delete the interactive search menu message
         try:
-            await client.send_message(
-                chat_id=target_chat,
-                text=post_text,
-                reply_markup=markup,
-                disable_web_page_preview=True
-            )
-            await callback_query.message.reply_text(
-                f"✅ **Posted to channel successfully!**\n\n📺 **Title**: {title}\n📢 **Channel**: `{post_channel}`",
-                quote=True
-            )
-        except Exception as send_err:
-            LOGGER.error(f"Failed to post rendered message to channel {post_channel}: {send_err}")
-            await callback_query.message.reply_text(
-                f"❌ **Error posting to channel**: {send_err}\n"
-                "Please make sure the bot is an administrator in the configured channel and has post messages permission.",
-                quote=True
-            )
+            await callback_query.message.delete()
+        except Exception:
+            pass
 
     except Exception as e:
         LOGGER.error(f"Error in imdb_detail_callback: {e}")
-        await callback_query.message.reply_text(f"⚠️ Error formatting or posting: {e}", quote=True)
+        await callback_query.message.reply_text(f"⚠️ Error formatting: {e}", quote=True)

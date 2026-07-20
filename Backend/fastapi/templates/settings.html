@@ -630,11 +630,22 @@
                 — list of Telegram user IDs that are authorized to use the <code>/imdb</code> command. The owner (OWNER_ID) has access by default.
             </span>
         </label>
-        <div id="imdb_authorized_users_items" class="list-container"></div>
-        <button type="button" class="btn btn-secondary btn-sm" style="margin-top:0.5rem"
-            onclick="addSimpleListItem('imdb_authorized_users_items', 'number', '')">
-            <i class="fa-solid fa-plus"></i> Add User ID
-        </button>
+        <div class="multi-list-items" id="imdb_authorized_users_items">
+            {% for uid in settings.imdb_authorized_users %}
+            <div class="multi-item">
+                <input type="number" class="s-input" value="{{ uid }}" data-list="imdb_authorized_users">
+                <button class="remove-btn" onclick="removeItem(this)" title="Remove">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="add-row">
+            <input type="number" id="imdb_authorized_users_new" class="s-input"
+                placeholder="Telegram user ID (numeric)"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();addItem('imdb_authorized_users')}">
+            <button class="add-btn" onclick="addItem('imdb_authorized_users')">+ Add User ID</button>
+        </div>
     </div>
 
     <!-- ── Proxy ───────────────────────────────────────────────────────── -->
@@ -962,7 +973,7 @@ function addItem(listKey) {
         item.className = 'multi-item auth-item';
         item.innerHTML = authRowHTML(value, false);
     } else {
-        const isNumeric = listKey === 'approver_ids';
+        const isNumeric = listKey === 'approver_ids' || listKey === 'imdb_authorized_users';
         item.className = 'multi-item';
         item.innerHTML = `
         <input type="${isNumeric ? 'number' : 'text'}"

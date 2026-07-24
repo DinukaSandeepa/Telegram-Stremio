@@ -1229,7 +1229,8 @@ class Database:
 
     async def insert_media(
         self, metadata_info: dict,
-        channel: int, msg_id: int, size: str, name: str, raw_size: int = 0
+        channel: int, msg_id: int, size: str, name: str, raw_size: int = 0,
+        status: Optional[dict] = None
     ) -> Optional[ObjectId]:
 
         group_key = metadata_info.get("group_key")
@@ -1280,7 +1281,7 @@ class Database:
                 origin_country=metadata_info.get('origin_country', []) or [],
                 telegram=[quality_detail]
             )
-            return await self.update_movie(media)
+            return await self.update_movie(media, status)
         elif metadata_info['media_type'] == "porn":
             media = PornSchema(
                 tpdb_id=metadata_info.get('tpdb_id'),
@@ -1332,7 +1333,7 @@ class Database:
                     )]
                 )]
             )
-            return await self.update_tv_show(tv_show)
+            return await self.update_tv_show(tv_show, status)
 
     async def _delete_split_part(self, part: dict) -> None:
         try:
@@ -1390,8 +1391,16 @@ class Database:
         size = str(quality.get("size") or "").strip().lower()
         return (quality.get("quality"), name, size)
 
+    @staticmethod
+    def _is_personal_tmdb(tmdb_id) -> bool:
+        try:
+            return int(tmdb_id) < 0
+        except (TypeError, ValueError):
+            return False
+
     async def _apply_quality_update(
-        self, existing_qualities: List[dict], quality_to_update: dict
+        self, existing_qualities: List[dict], quality_to_update: dict,
+        is_personal: bool = False, status: Optional[dict] = None
     ) -> List[dict]:
         target_quality = quality_to_update.get("quality")
         incoming_group_key = quality_to_update.get("group_key")
@@ -1428,16 +1437,18 @@ class Database:
             return existing_qualities
 
         #----- REPLACE_MODE off: skip exact duplicates when protection is on, else stack.
-        if SettingsManager.current().duplicate_protection:
+        if SettingsManager.current().duplicate_protection and not is_personal:
             key = self._dup_key(quality_to_update)
             for q in existing_qualities:
                 if not q.get("group_key") and self._dup_key(q) == key:
                     LOGGER.info(f"Duplicate protection: skipped existing stream '{quality_to_update.get('name')}'.")
+                    if status is not None:
+                        status["duplicate_skipped"] = True
                     return existing_qualities
         existing_qualities.append(quality_to_update)
         return existing_qualities
 
-    async def update_movie(self, movie_data: MovieSchema) -> Optional[ObjectId]:
+    async def update_movie(self, movie_data: MovieSchema, status: Optional[dict] = None) -> Optional[ObjectId]:
         try:
             movie_dict = movie_data.dict()
         except ValidationError as e:
@@ -1482,7 +1493,9 @@ class Database:
 
         existing_qualities = existing_movie.get("telegram", [])
 
-        existing_qualities = await self._apply_quality_update(existing_qualities, quality_to_update)
+        existing_qualities = await self._apply_quality_update(
+            existing_qualities, quality_to_update, self._is_personal_tmdb(tmdb_id), status
+        )
 
         existing_movie["telegram"] = existing_qualities
         existing_movie["updated_on"] = datetime.utcnow()
@@ -1567,7 +1580,7 @@ class Database:
             if any(keyword in str(e).lower() for keyword in ["storage", "quota"]):
                 return await self._handle_storage_error(self.update_porn, porn_data, total_storage_dbs=total_storage_dbs)
 
-    async def update_tv_show(self, tv_show_data: TVShowSchema) -> Optional[ObjectId]:
+    async def update_tv_show(self, tv_show_data: TVShowSchema, status: Optional[dict] = None) -> Optional[ObjectId]:
         try:
             tv_show_dict = tv_show_data.dict()
         except ValidationError as e:
@@ -1634,7 +1647,7 @@ class Database:
 
                 for quality in episode["telegram"]:
                     existing_episode["telegram"] = await self._apply_quality_update(
-                        existing_episode["telegram"], quality
+                        existing_episode["telegram"], quality, self._is_personal_tmdb(tmdb_id), status
                     )
 
         existing_tv["updated_on"] = datetime.utcnow()

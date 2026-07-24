@@ -1,3 +1,4 @@
+import asyncio
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -14,9 +15,11 @@ from Backend import __version__, db
 from Backend.config import Telegram
 from Backend.fastapi.security.tokens import verify_token
 from Backend.fastapi.themes import DEFAULT_THEME, get_theme
+from Backend.helper.fanart import fanart_artwork
 from Backend.helper.global_search import global_search, is_global_search_enabled
 from Backend.helper.imdb import get_detail, get_season
-from Backend.helper.metadata import resolve_cover_url
+from Backend.helper.metadata import resolve_cover_url, COMBINED_SEASON, COMBINED_EPISODE_BASE
+from Backend.helper.split_files import parse_combined_episodes, combined_name_key
 from Backend.helper.settings_manager import SettingsManager
 from Backend.helper.subtitles import get_subtitles_for, stremio_subtitle_entries
 from Backend.logger import LOGGER
@@ -29,6 +32,20 @@ templates = Jinja2Templates(directory="Backend/fastapi/templates")
 ADDON_NAME = "Telegram"
 ADDON_VERSION = __version__
 PAGE_SIZE = 15
+
+
+#----- Wrap a direct stream URL with the configured proxy (plain prepend or MediaFlow)
+def build_proxy_url(original_url: str) -> str | None:
+    settings = SettingsManager.current()
+    base = settings.http_proxy_url
+    if not base:
+        return None
+    if settings.mediaflow_proxy:
+        url = f"{base.rstrip('/')}/proxy/stream?d={quote(original_url, safe='')}"
+        if settings.mediaflow_password:
+            url += f"&api_password={quote(settings.mediaflow_password, safe='')}"
+        return url
+    return f"{base}{original_url}"
 
 _membership_cache: dict = {}
 _MEMBERSHIP_TTL = 60
@@ -131,6 +148,42 @@ def _abs_media_url(value: str) -> str:
     return f"{SettingsManager.current().base_url}{value[idx:]}" if idx != -1 else value
 
 
+BETTERPOSTER_DEFAULT = "https://btttr.cc/poster/imdb/poster-default/{imdb_id}.jpg"
+RPDB_FREE = "https://api.ratingposterdb.com/t0-free-rpdb/imdb/poster-default/{imdb_id}.jpg"
+
+
+def _poster_url(imdb_id: str, fallback: str) -> str:
+    settings = SettingsManager.current()
+    if imdb_id:
+        if settings.better_poster_enabled:
+            template = settings.better_poster or BETTERPOSTER_DEFAULT
+            return template.replace("{imdb_id}", str(imdb_id))
+        if settings.rpdb_enabled:
+            key = settings.rpdb_api_key
+            template = (
+                f"https://api.ratingposterdb.com/{key}/imdb/poster-default/{{imdb_id}}.jpg"
+                if key else RPDB_FREE
+            )
+            return template.replace("{imdb_id}", str(imdb_id))
+    return _abs_media_url(fallback)
+
+
+async def _apply_fanart(meta: dict, item: dict) -> None:
+    if not SettingsManager.current().fanart_enabled:
+        return
+    try:
+        art = await fanart_artwork(item.get("imdb_id"), item.get("tmdb_id"), item.get("media_type"))
+    except Exception as e:
+        LOGGER.warning(f"[FANART] artwork lookup failed for {item.get('imdb_id')}: {e}")
+        return
+    if art.get("poster"):
+        meta["poster"] = art["poster"]
+    if art.get("logo"):
+        meta["logo"] = art["logo"]
+    if art.get("background"):
+        meta["background"] = art["background"]
+
+
 #----- Map an internal media item into a Stremio meta object
 def convert_to_stremio_meta(item: dict) -> dict:
     media_type = "series" if item.get("media_type") == "tv" else "movie"
@@ -139,7 +192,7 @@ def convert_to_stremio_meta(item: dict) -> dict:
         "id": item.get('imdb_id'),
         "type": media_type,
         "name": item.get("title"),
-        "poster": _abs_media_url(item.get("poster")),
+        "poster": _poster_url(item.get("imdb_id"), item.get("poster")),
         "logo": item.get("logo") or "",
         "year": item.get("release_year"),
         "releaseInfo": str(item.get("release_year", "")),
@@ -498,6 +551,8 @@ async def get_catalog(token: str, media_type: str, id: str, extra: Optional[str]
         return {"metas": []}
 
     metas = [convert_to_stremio_meta(item) for item in items]
+    if SettingsManager.current().fanart_enabled:
+        await asyncio.gather(*(_apply_fanart(m, it) for m, it in zip(metas, items)))
     return {"metas": metas}
 
 
@@ -529,7 +584,7 @@ async def get_meta(token: str, media_type: str, id: str, token_data: dict = Depe
         "year": str(media.get("release_year", "")),
         "imdbRating": str(media.get("rating", "")),
         "genres": media.get("genres", []),
-        "poster": _abs_media_url(media.get("poster")),
+        "poster": _poster_url(media.get("imdb_id") or imdb_id, media.get("poster")),
         "logo": media.get("logo", ""),
         "background": _abs_media_url(media.get("backdrop")),
         "imdb_id": media.get("imdb_id", ""),
@@ -538,6 +593,8 @@ async def get_meta(token: str, media_type: str, id: str, token_data: dict = Depe
         "cast": media.get("cast") or [],
         "runtime": media.get("runtime") or "",
     }
+
+    await _apply_fanart(meta_obj, media)
 
     links = []
     for actor in (media.get("cast") or []):
@@ -764,6 +821,8 @@ async def get_streams(
 
     streams = []
 
+    is_combined = season_num == COMBINED_SEASON and episode_num is not None and episode_num >= COMBINED_EPISODE_BASE
+
     if media_details and "telegram" in media_details:
         for quality in media_details.get("telegram", []):
             if quality.get("id"):
@@ -772,40 +831,29 @@ async def get_streams(
                 size = quality.get("size", "")
                 size_bytes = parse_size_to_bytes(size)
 
+                combined = parse_combined_episodes(filename) if is_combined else None
+                episode_start = combined.get("start") or 0 if combined else 0
+                name_key = combined_name_key(filename) if combined else ""
+
                 stream_name, stream_title = format_stream_details(
                     filename, quality_str, size, is_split=bool(quality.get("group_key"))
                 )
 
+                if combined:
+                    label = "Full" if combined.get("start") is None else f"E{combined['start']:02d}-E{combined['end']:02d}"
+                    if label.lower() not in stream_name.lower():
+                        stream_name = f"{stream_name} {label}"
+
                 original_url = f"{SettingsManager.current().base_url}/dl/{token}/{quality.get('id')}/video.mkv"
-                proxy_url = f"{SettingsManager.current().http_proxy_url}{original_url}" if SettingsManager.current().http_proxy_url else None
+                proxy_url = build_proxy_url(original_url)
 
                 if SettingsManager.current().show_proxy_and_non_proxy_both and proxy_url:
-                    streams.append({
-                        "name": f"{stream_name} (Proxy)",
-                        "title": stream_title,
-                        "url": proxy_url,
-                        "size_bytes": size_bytes
-                    })
-                    streams.append({
-                        "name": f"{stream_name} (Direct)",
-                        "title": stream_title,
-                        "url": original_url,
-                        "size_bytes": size_bytes
-                    })
+                    streams.append({"name": f"{stream_name} (Proxy)", "title": stream_title, "url": proxy_url, "size_bytes": size_bytes, "episode_start": episode_start, "name_key": name_key})
+                    streams.append({"name": f"{stream_name} (Direct)", "title": stream_title, "url": original_url, "size_bytes": size_bytes, "episode_start": episode_start, "name_key": name_key})
                 elif proxy_url:
-                    streams.append({
-                        "name": stream_name,
-                        "title": stream_title,
-                        "url": proxy_url,
-                        "size_bytes": size_bytes
-                    })
+                    streams.append({"name": stream_name, "title": stream_title, "url": proxy_url, "size_bytes": size_bytes, "episode_start": episode_start, "name_key": name_key})
                 else:
-                    streams.append({
-                        "name": stream_name,
-                        "title": stream_title,
-                        "url": original_url,
-                        "size_bytes": size_bytes
-                    })
+                    streams.append({"name": stream_name, "title": stream_title, "url": original_url, "size_bytes": size_bytes, "episode_start": episode_start, "name_key": name_key})
     elif is_global_search_enabled():
         try:
             streams.extend(
@@ -817,10 +865,15 @@ async def get_streams(
     if not streams:
         return {"streams": []}
 
-    streams.sort(
-        key=lambda s: (get_resolution_priority(s.get("name", "")), s.get("size_bytes", 0)),
-        reverse=True
-    )
+    if is_combined:
+        streams.sort(key=lambda s: s.get("episode_start", 0))
+        streams.sort(key=lambda s: s.get("name_key", ""))
+        streams.sort(key=lambda s: get_resolution_priority(s.get("name", "")), reverse=True)
+    else:
+        streams.sort(
+            key=lambda s: (get_resolution_priority(s.get("name", "")), s.get("size_bytes", 0)),
+            reverse=True
+        )
     name_count: dict = {}
     for s in streams:
         name_count[s["name"]] = name_count.get(s["name"], 0) + 1

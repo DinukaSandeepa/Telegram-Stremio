@@ -8,9 +8,9 @@ from pyrogram.errors import FloodWait, ChannelPrivate, ChatAdminRequired
 
 from Backend.logger import LOGGER
 from Backend.helper.encrypt import encode_string, decode_string
-from Backend.helper.manual_add import stamp_caption_with_id
-from Backend.helper.metadata import metadata
+from Backend.helper.metadata import metadata, extract_default_id
 from Backend.helper.pyro import clean_filename, finalize_media_name, get_readable_file_size
+from Backend.helper.skip_channel import is_skip_channel, route_to_skip_channel
 from Backend.helper.split_files import parse_split_info
 from Backend.helper.subtitles import ingest_subtitle, is_subtitle_file
 
@@ -380,7 +380,7 @@ class ScanManager:
                     async with sem:
                         if self._cancel:
                             return
-                        await self._process_message(msg, chat_id)
+                        await self._process_message(client, msg, chat_id)
                         s["counters"]["processed"] += 1
 
                 await asyncio.gather(*(_worker(m) for m in to_process))
@@ -432,9 +432,13 @@ class ScanManager:
             )
         return last_id
 
-    async def _process_message(self, message, chat_id: int) -> None:
+    async def _process_message(self, client, message, chat_id: int) -> None:
         s = self.state
         db = self._db
+
+        if is_skip_channel(message):
+            s["counters"]["skipped_meta"] += 1
+            return
 
         #----- Subtitle files: match to a title and store, don't treat as media
         sub_name = message.document.file_name if message.document else ""
@@ -493,17 +497,26 @@ class ScanManager:
 
         duration = getattr(message.video or message.animation, "duration", None)
         try:
-            metadata_info = await metadata(clean_filename(title), channel_int, msg_id, duration=duration)
+            metadata_info = await metadata(
+                clean_filename(title), channel_int, msg_id,
+                override_id=extract_default_id(message.caption or ""),
+                duration=duration,
+            )
         except Exception as e:
             LOGGER.warning(f"[ScanManager] Metadata exception for msg {msg_id}: {e}")
             metadata_info = None
 
         if metadata_info is None:
             s["counters"]["skipped_meta"] += 1
+            try:
+                await route_to_skip_channel(client, message)
+            except Exception as e:
+                LOGGER.warning(f"[ScanManager] Skip-channel route failed for msg {msg_id}: {e}")
             return
 
         title_clean = finalize_media_name(title, bool(metadata_info.get('group_key')))
 
+        insert_status: dict = {}
         try:
             async with self._db_lock:
                 updated_id = await db.insert_media(
@@ -513,10 +526,13 @@ class ScanManager:
                     size=size,
                     name=title_clean,
                     raw_size=raw_size,
+                    status=insert_status,
                 )
             if updated_id:
-                s["counters"]["indexed"] += 1
-                asyncio.create_task(stamp_caption_with_id(message, metadata_info))
+                if insert_status.get("duplicate_skipped"):
+                    s["counters"]["skipped_dup"] += 1
+                else:
+                    s["counters"]["indexed"] += 1
             else:
                 s["counters"]["skipped_meta"] += 1
         except Exception as e:

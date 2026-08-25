@@ -18,7 +18,6 @@ class Telegram:
     API_ID              = _int_env("API_ID")
     API_HASH            = getenv("API_HASH", "")
     BOT_TOKEN           = getenv("BOT_TOKEN", "")
-    USER_SESSION_STRING = getenv("USER_SESSION_STRING", "")
 
     #----- Required: Database URIs
     DATABASE = [db.strip() for db in (getenv("DATABASE") or "").split(",") if db.strip()]
@@ -32,6 +31,7 @@ class Telegram:
     HIDE_CATALOG                  = getenv("HIDE_CATALOG", "false").lower() == "true"
     AUTH_CHANNEL                  = [c.strip() for c in (getenv("AUTH_CHANNEL") or "").split(",") if c.strip()]
     TMDB_API                      = getenv("TMDB_API", "")
+    TVDB_API                       = getenv("TVDB_API", "")
     BASE_URL                      = getenv("BASE_URL", "").rstrip("/")
     UPSTREAM_REPO                 = getenv("UPSTREAM_REPO", "")
     UPSTREAM_BRANCH               = getenv("UPSTREAM_BRANCH", "")
@@ -42,3 +42,7 @@ class Telegram:
     APPROVER_IDS                  = [int(x.strip()) for x in (getenv("APPROVER_IDS") or "").split(",") if x.strip().isdigit()]
     HTTP_PROXY_URL                = getenv("HTTP_Proxy_URL", "")
     SHOW_PROXY_AND_NON_PROXY_BOTH = getenv("SHOW_ProxyAndNonProxyBoth", "false").lower() == "true"
+
+    #----- WebDAV (optional env fallback; prefer Settings page)
+    WEBDAV_USER     = getenv("WEBDAV_USER", "")
+    WEBDAV_PASSWORD = getenv("WEBDAV_PASSWORD", "")

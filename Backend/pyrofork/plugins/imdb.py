@@ -10,8 +10,7 @@ from pyrogram.types import (
 )
 from Backend.config import Telegram
 from Backend.helper.settings_manager import SettingsManager
-from Backend.logger import LOGGER
-from Backend.helper.metadata import get_tmdb_client, _tmdb_details, tmdb_api_key
+from Backend.helper.metadata.providers.tmdb import get_tmdb_client, details as _tmdb_details, tmdb_api_key
 
 #----- In-memory query cache for pagination
 IMDB_QUERY_CACHE = {}

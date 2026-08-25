@@ -3,6 +3,7 @@ from __future__ import annotations
 import secrets
 from typing import Any, Dict, List
 
+import Backend.pyrofork.bot as botmod
 from Backend.config import Telegram
 from Backend.helper.passwords import hash_password
 from Backend.logger import LOGGER
@@ -14,6 +15,7 @@ _DEFAULTS: Dict[str, Any] = {
     "hide_catalog": False,
     "auth_channels": [],
     "tmdb_api": "",
+    "tvdb_api": "",
     "base_url": "",
     "upstream_repo": "https://github.com/weebzone/Telegram-Stremio",
     "upstream_branch": "master",
@@ -29,12 +31,15 @@ _DEFAULTS: Dict[str, Any] = {
     "show_proxy_and_non_proxy_both": False,
     "mediaflow_proxy": False,
     "mediaflow_password": "",
+    "webdav_user": "",
+    "webdav_password": "",
     "multi_tokens": [],
     "extra_databases": [],
     "global_search": False,
     "global_search_channels": [],
     "anime_channels": [],
     "manual_channels": [],
+    "channel_titles": {},
     "announce_new_content": False,
     "announcement_channel": "",
     "skip_channel": "",
@@ -63,6 +68,7 @@ def _seed_from_env() -> Dict[str, Any]:
         "hide_catalog":                 Telegram.HIDE_CATALOG,
         "auth_channels":                list(Telegram.AUTH_CHANNEL),
         "tmdb_api":                     Telegram.TMDB_API,
+        "tvdb_api":                     getattr(Telegram, "TVDB_API", "") or "",
         "base_url":                     Telegram.BASE_URL,
         "upstream_repo":                Telegram.UPSTREAM_REPO,
         "upstream_branch":              Telegram.UPSTREAM_BRANCH,
@@ -132,6 +138,13 @@ class Settings:
         return list(self._d.get("manual_channels") or [])
 
     @property
+    def channel_titles(self) -> Dict[str, str]:
+        raw = self._d.get("channel_titles") or {}
+        if not isinstance(raw, dict):
+            return {}
+        return {str(k): str(v) for k, v in raw.items() if k and v}
+
+    @property
     def announce_new_content(self) -> bool:
         return bool(self._d.get("announce_new_content", False))
 
@@ -165,6 +178,10 @@ class Settings:
         return str(self._d.get("tmdb_api") or "")
 
     @property
+    def tvdb_api(self) -> str:
+        return str(self._d.get("tvdb_api") or "").strip()
+
+    @property
     def base_url(self) -> str:
         return str(self._d.get("base_url") or "").rstrip("/")
 
@@ -195,6 +212,14 @@ class Settings:
     @property
     def mediaflow_password(self) -> str:
         return str(self._d.get("mediaflow_password") or "")
+
+    @property
+    def webdav_user(self) -> str:
+        return str(self._d.get("webdav_user") or "").strip()
+
+    @property
+    def webdav_password(self) -> str:
+        return str(self._d.get("webdav_password") or "")
 
     @property
     def payment_instructions(self) -> str:
@@ -315,6 +340,50 @@ class SettingsManager:
             return Settings({})
         return cls._current
 
+    @staticmethod
+    def _all_channel_ids(data: dict) -> set:
+        ids = set()
+        for key in ("auth_channels", "global_search_channels", "manual_channels", "anime_channels", "porn_channels"):
+            for c in (data.get(key) or []):
+                c = str(c).strip()
+                if c:
+                    ids.add(c)
+        for key in ("announcement_channel", "skip_channel"):
+            v = str(data.get(key) or "").strip()
+            if v:
+                ids.add(v)
+        return ids
+
+    @classmethod
+    async def _sync_channel_titles(cls, data: dict) -> dict:
+        active = cls._all_channel_ids(data)
+        existing = data.get("channel_titles") or {}
+        if not isinstance(existing, dict):
+            existing = {}
+        titles = {str(k): str(v) for k, v in existing.items() if str(k) in active and v}
+        missing = [cid for cid in active if cid not in titles]
+        if missing:
+            clients = []
+            stream = getattr(botmod, "StreamBot", None)
+            if stream is not None:
+                clients.append(stream)
+            if botmod.Userbot is not None:
+                clients.append(botmod.Userbot)
+            for cid in missing:
+                resolved = None
+                for client in clients:
+                    try:
+                        chat = await client.get_chat(int(cid))
+                        if chat and getattr(chat, "title", None):
+                            resolved = chat.title
+                            break
+                    except Exception:
+                        continue
+                if resolved:
+                    titles[cid] = resolved
+        data["channel_titles"] = titles
+        return titles
+
     #----- Persist new values, flip the snapshot, and reinitialise dependents
     @classmethod
     async def update(cls, db, new_values: Dict[str, Any]) -> Dict[str, str]:
@@ -326,13 +395,14 @@ class SettingsManager:
 
         #----- Global Search requires a Userbot session; enforce it server-side
         if merged.get("global_search"):
-            if not Telegram.USER_SESSION_STRING:
+            if botmod.Userbot is None:
                 merged["global_search"] = False
                 LOGGER.warning(
-                    "SettingsManager: rejected global_search=True — "
-                    "USER_SESSION_STRING is not configured."
+                    "SettingsManager: rejected global_search=True — no Userbot session connected."
                 )
-                results["global_search"] = "rejected — no Userbot session configured"
+                results["global_search"] = "rejected — connect a Telegram session in Settings first"
+
+        await cls._sync_channel_titles(merged)
 
         #----- Phase 1: validate/apply changes that can abort the save
         old_extra = old.get("extra_databases") or []
